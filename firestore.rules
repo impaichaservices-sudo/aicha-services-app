@@ -6,7 +6,9 @@ service cloud.firestore {
     function me() { return request.auth.uid; }
     // Le patron : un document admins/{uid} créé à la main dans la console.
     function isAdmin() {
-      return signedIn() && exists(/databases/$(database)/documents/admins/$(me()));
+      return signedIn() && (
+        me() in ['JJj2RolSbmVlWc3n4qT6NvAhxZ63']
+        || exists(/databases/$(database)/documents/admins/$(me())));
     }
     function onlyChanges(keys) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);

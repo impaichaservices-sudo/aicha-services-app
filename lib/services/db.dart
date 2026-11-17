@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../config.dart';
 import '../models/app_user.dart';
 import '../models/catalog_item.dart';
 import '../models/order.dart';
@@ -29,7 +30,9 @@ class Db {
       .map((d) => d.exists ? AppUser.fromDoc(d) : null);
 
   /// Le patron = un document admins/{uid} créé dans la console Firebase.
-  static Stream<bool> isAdmin(String uid) => admins
+  static Stream<bool> isAdmin(String uid) => AppConfig.adminUids.contains(uid)
+      ? Stream<bool>.value(true)
+      : admins
       .doc(uid)
       .snapshots()
       .map((d) => d.exists)

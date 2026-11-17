@@ -1,15 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../config.dart';
 import '../models/app_user.dart';
 import '../models/order.dart';
 import '../models/shop_settings.dart';
 import '../services/auth_service.dart';
 import '../services/db.dart';
-import '../services/payment_service.dart';
 import '../state/cart.dart';
 import '../utils.dart';
+import 'order_detail_screen.dart';
 
+/// Commande : coordonnées, retrait ou livraison, récapitulatif, confirmation.
 class CheckoutScreen extends StatefulWidget {
   final AppUser? user;
   const CheckoutScreen({super.key, required this.user});
@@ -24,14 +26,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   late final _phone = TextEditingController(text: widget.user?.phone ?? '');
   final _city = TextEditingController(text: 'Bamako');
   final _address = TextEditingController();
+  final _info = TextEditingController();
   late final Stream<ShopSettings> _settings = Db.settings();
   String _delivery = 'retrait';
-  String _method = 'especes';
+  final String _method = 'especes';
   bool _busy = false;
 
   @override
   void dispose() {
-    for (final c in [_name, _phone, _city, _address]) {
+    for (final c in [_name, _phone, _city, _address, _info]) {
       c.dispose();
     }
     super.dispose();
@@ -43,17 +46,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   Future<void> _confirm(ShopSettings settings) async {
     if (!_form.currentState!.validate()) return;
     final cart = context.read<Cart>();
-    final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
-
+    final messenger = ScaffoldMessenger.of(context);
     final fee = _delivery == 'livraison' ? settings.deliveryFee : 0;
     final order = ShopOrder(
+      shopId: widget.user?.shopId ?? AppConfig.defaultShopId,
       buyerId: AuthService.current!.uid,
       buyerName: _name.text.trim(),
       phone: _phone.text.trim(),
       delivery: _delivery,
       city: _delivery == 'livraison' ? _city.text.trim() : '',
       address: _delivery == 'livraison' ? _address.text.trim() : '',
+      deliveryInfo: _delivery == 'livraison' ? _info.text.trim() : '',
       items: cart.lines
           .map((l) => OrderItem(
                 itemId: l.item.id,
@@ -62,8 +66,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 price: l.item.price,
                 unit: l.item.unit,
                 qty: l.qty,
-                fileUrl: l.fileUrl,
-                fileName: l.fileName,
                 note: l.note,
               ))
           .toList(),
@@ -76,26 +78,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
     setState(() => _busy = true);
     try {
-      final id = await Db.createOrder(order);
+      final id = await Db.createOrder(order, bookings: cart.bookings);
       cart.clear();
-      if (order.isOnlinePayment && !order.quoteNeeded) {
-        try {
-          await PaymentService.pay(orderIds: [id], method: _method);
-        } catch (e) {
-          messenger.showSnackBar(SnackBar(
-            content: Text('${PaymentService.message(e)}\n'
-                'Vous pourrez payer depuis « Commandes ».'),
-          ));
-          navigator.pop();
-          return;
-        }
-      }
-      messenger.showSnackBar(SnackBar(
-        content: Text(order.quoteNeeded
-            ? 'Demande envoyée ! Nous vous enverrons le prix final.'
-            : 'Commande envoyée ! Merci.'),
-      ));
-      navigator.pop();
+      navigator.popUntil((r) => r.isFirst);
+      navigator.push(MaterialPageRoute(
+          builder: (_) => OrderDetailScreen(orderId: id, justCreated: true)));
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('Erreur : $e')));
     } finally {
@@ -106,114 +93,129 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   @override
   Widget build(BuildContext context) {
     final cart = context.watch<Cart>();
-    final t = Theme.of(context).textTheme;
-
     return StreamBuilder<ShopSettings>(
       stream: _settings,
       builder: (context, snap) {
-        final settings = snap.data ?? const ShopSettings();
-        final fee = _delivery == 'livraison' ? settings.deliveryFee : 0;
+        final s = snap.data ?? const ShopSettings();
+        final fee = _delivery == 'livraison' ? s.deliveryFee : 0;
         final total = cart.subtotal + fee;
-
         return Scaffold(
-          appBar: AppBar(title: const Text('Finaliser la commande')),
+          appBar: AppBar(title: const Text('Ma commande')),
           body: Form(
             key: _form,
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                Text('Vos coordonnées', style: t.titleMedium),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _name,
-                  decoration: const InputDecoration(labelText: 'Nom complet'),
-                  validator: _required,
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _phone,
-                  keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(labelText: 'Téléphone'),
-                  validator: _required,
-                ),
-                const SizedBox(height: 24),
-                Text('Réception', style: t.titleMedium),
-                const SizedBox(height: 8),
-                SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment(
-                        value: 'retrait',
-                        icon: Icon(Icons.store),
-                        label: Text('Retrait en boutique')),
-                    ButtonSegment(
-                        value: 'livraison',
-                        icon: Icon(Icons.delivery_dining),
-                        label: Text('Livraison')),
-                  ],
-                  selected: {_delivery},
-                  onSelectionChanged: (s) => setState(() => _delivery = s.first),
-                ),
-                const SizedBox(height: 12),
-                if (_delivery == 'retrait')
-                  Text(settings.address.isEmpty
-                      ? 'Nous vous appellerons quand votre commande sera prête.'
-                      : '📍 ${settings.address}'
-                          '${settings.hours.isEmpty ? '' : '\n🕒 ${settings.hours}'}')
-                else ...[
+                _section('Vos coordonnées', [
                   TextFormField(
-                    controller: _city,
-                    decoration: const InputDecoration(labelText: 'Ville'),
+                    controller: _name,
+                    decoration: const InputDecoration(
+                        labelText: 'Nom complet',
+                        prefixIcon: Icon(Icons.person_outline)),
                     validator: _required,
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
-                    controller: _address,
-                    maxLines: 2,
+                    controller: _phone,
+                    keyboardType: TextInputType.phone,
                     decoration: const InputDecoration(
-                      labelText: 'Adresse / quartier / repère',
-                    ),
+                        labelText: 'Téléphone',
+                        prefixIcon: Icon(Icons.phone_outlined)),
                     validator: _required,
                   ),
+                ]),
+                _section('Réception', [
+                  _choice('retrait', Icons.storefront_rounded,
+                      'Retrait en boutique', 'Gratuit'),
                   const SizedBox(height: 8),
-                  Text('Frais de livraison : ${fcfa(settings.deliveryFee)}'),
-                ],
-                const SizedBox(height: 24),
-                Text('Paiement', style: t.titleMedium),
-                for (final m in paymentMethodLabels.entries)
-                  RadioListTile<String>(
-                    contentPadding: EdgeInsets.zero,
-                    value: m.key,
-                    groupValue: _method,
-                    title: Text(m.value),
-                    onChanged: (v) => setState(() => _method = v!),
-                  ),
-                if (cart.needsQuote && _method != 'especes')
-                  Text(
-                    'Votre commande contient des articles sur devis : vous '
-                    'pourrez payer dans « Commandes » dès que le prix final '
-                    'sera fixé.',
-                    style: t.bodySmall,
-                  ),
+                  _choice('livraison', Icons.delivery_dining_rounded,
+                      'Livraison', fcfa(s.deliveryFee)),
+                  const SizedBox(height: 12),
+                  if (_delivery == 'retrait')
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppConfig.paleGreen,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(AppConfig.shopName,
+                              style: TextStyle(fontWeight: FontWeight.w800)),
+                          if (s.address.isNotEmpty) Text('📍 ${s.address}'),
+                          if (s.hours.isNotEmpty) Text('🕒 ${s.hours}'),
+                          if (s.address.isEmpty)
+                            const Text(
+                                'Nous vous appellerons quand votre commande sera prête.'),
+                        ],
+                      ),
+                    )
+                  else ...[
+                    TextFormField(
+                      controller: _city,
+                      decoration: const InputDecoration(labelText: 'Ville'),
+                      validator: _required,
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _address,
+                      decoration: const InputDecoration(
+                          labelText: 'Adresse / quartier'),
+                      validator: _required,
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _info,
+                      maxLines: 2,
+                      decoration: const InputDecoration(
+                          labelText: 'Informations complémentaires',
+                          hintText: 'Repère, porte, heure préférée…'),
+                    ),
+                  ],
+                ]),
+                _section('Récapitulatif', [
+                  for (final l in cart.lines)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(children: [
+                        Expanded(child: Text('${l.qty} × ${l.item.name}')),
+                        Text(l.item.onQuote ? 'Sur devis' : fcfa(l.subtotal),
+                            style: const TextStyle(fontWeight: FontWeight.w600)),
+                      ]),
+                    ),
+                  const Divider(height: 20),
+                  _line('Sous-total', fcfa(cart.subtotal)),
+                  _line('Livraison', _delivery == 'livraison' ? fcfa(fee) : 'Gratuit'),
+                  const SizedBox(height: 4),
+                  _line(cart.needsQuote ? 'Total (hors devis)' : 'Total', fcfa(total),
+                      bold: true),
+                  const SizedBox(height: 8),
+                  _line('Paiement', 'Espèces (livraison ou retrait)'),
+                  if (cart.needsQuote)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 8),
+                      child: Text(
+                        'Le prix final des services sur devis vous sera envoyé dans l\'application.',
+                        style: TextStyle(color: Colors.black54, fontSize: 13),
+                      ),
+                    ),
+                ]),
               ],
             ),
           ),
           bottomNavigationBar: SafeArea(
             child: Padding(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
               child: FilledButton(
-                onPressed:
-                    _busy || cart.isEmpty ? null : () => _confirm(settings),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: _busy
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : Text(cart.needsQuote
-                          ? 'Envoyer ma demande'
-                          : 'Confirmer • ${fcfa(total)}'),
-                ),
+                onPressed: _busy || cart.isEmpty ? null : () => _confirm(s),
+                child: _busy
+                    ? const SizedBox(
+                        height: 22,
+                        width: 22,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2.5, color: Colors.white))
+                    : const Text('Confirmer ma commande'),
               ),
             ),
           ),
@@ -221,4 +223,70 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       },
     );
   }
+
+  Widget _section(String title, List<Widget> children) => Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(title,
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 12),
+                ...children,
+              ],
+            ),
+          ),
+        ),
+      );
+
+  Widget _choice(String value, IconData icon, String title, String trailing) {
+    final selected = _delivery == value;
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () => setState(() => _delivery = value),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: selected ? AppConfig.paleGreen : Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+              color: selected ? AppConfig.green : const Color(0xFFDDE3DA),
+              width: selected ? 2 : 1),
+        ),
+        child: Row(children: [
+          Icon(icon, color: AppConfig.green),
+          const SizedBox(width: 12),
+          Expanded(
+              child: Text(title,
+                  style: const TextStyle(fontWeight: FontWeight.w700))),
+          Text(trailing, style: const TextStyle(color: Colors.black54)),
+          const SizedBox(width: 8),
+          Icon(selected ? Icons.radio_button_checked : Icons.radio_button_off,
+              color: selected ? AppConfig.green : Colors.black38),
+        ]),
+      ),
+    );
+  }
+
+  Widget _line(String label, String value, {bool bold = false}) => Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Row(children: [
+          Expanded(
+            child: Text(label,
+                style: TextStyle(
+                    fontSize: bold ? 17 : 14,
+                    fontWeight: bold ? FontWeight.w800 : FontWeight.w400)),
+          ),
+          Text(value,
+              style: TextStyle(
+                  fontSize: bold ? 18 : 14,
+                  fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
+                  color: bold ? AppConfig.green : null)),
+        ]),
+      );
 }

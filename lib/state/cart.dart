@@ -33,8 +33,22 @@ class Cart extends ChangeNotifier {
   int get subtotal => _lines.fold(0, (s, l) => s + l.subtotal);
   bool get needsQuote => _lines.any((l) => l.item.onQuote);
 
-  int _clamp(CatalogItem i, int q) =>
-      i.places > 0 && q > i.places ? i.places : q;
+  int _clamp(CatalogItem i, int q) {
+    if (i.places <= 0) return q;
+    final max = i.placesLeft < 1 ? 1 : i.placesLeft;
+    return q > max ? max : q;
+  }
+
+  /// Places de formation à réserver : id du service -> nombre.
+  Map<String, int> get bookings {
+    final m = <String, int>{};
+    for (final l in _lines) {
+      if (l.item.isTraining && l.item.places > 0) {
+        m[l.item.id] = (m[l.item.id] ?? 0) + l.qty;
+      }
+    }
+    return m;
+  }
 
   void add(CatalogItem item,
       {int qty = 1, String fileUrl = '', String fileName = '', String note = ''}) {

@@ -1,3 +1,33 @@
+# AÏCHA SERVICES — application de commande
+
+> **Votre satisfaction est notre engagement**
+
+## Version 2 (étape 1 de l'évolution)
+
+- Nouvelle identité visuelle (vert, noir, blanc), nouvel accueil :
+  recherche, catégories (Impression, Personnalisation, Formation, Autres),
+  **Nos offres**, **Services populaires**, grille de services.
+- Fiche service : grande image, Disponible / Indisponible, « À partir de »,
+  places restantes (formations), précisions, « Demander un devis ».
+- Commande : retrait ou livraison (+ informations complémentaires),
+  récapitulatif clair, **numéros AS-00001**.
+- **Discussion intégrée** : discussion générale avec l'équipe + une
+  discussion par commande ; l'équipe peut proposer un service (bouton
+  « Commander ce service ») ; chaque changement de statut est annoncé
+  dans la discussion de la commande.
+- Mes commandes : filtres (Toutes, Nouvelles, En cours, Prêtes, Terminées,
+  Mes devis) et progression visuelle.
+- Profil : mes commandes, devis, fichiers, discussions, notifications
+  (Commandes / Messages / Nouveautés ON/OFF), contact, à propos.
+- Gestion : tableau de bord (nouvelles commandes, en cours, prêtes,
+  nouveaux messages), Commandes, Discussions, Catalogue, Offres et
+  nouveautés, Clients, Réglages.
+
+Étapes suivantes : 2) multi-boutiques, responsables, agents, permissions ;
+3) fichiers dans l'appli (Cloudinary) et notifications push (Cloudflare).
+
+---
+
 # AICHA SERVICES MARKET 🖨️ — application de commande
 
 Application Android pour **AICHA SERVICES MARKET** (imprimerie et formation).

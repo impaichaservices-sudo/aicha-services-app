@@ -56,6 +56,8 @@ class AuthService {
       'name': name.trim(),
       'phone': displayPhone(phone),
       'email': '',
+      'shopId': 'main',
+      'notif': {'orders': true, 'messages': true, 'promos': true},
       'createdAt': FieldValue.serverTimestamp(),
     });
   }

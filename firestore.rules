@@ -4,7 +4,6 @@ service cloud.firestore {
 
     function signedIn() { return request.auth != null; }
     function me() { return request.auth.uid; }
-    // Le patron : un document admins/{uid} créé à la main dans la console.
     function isAdmin() {
       return signedIn() && (
         me() in ['JJj2RolSbmVlWc3n4qT6NvAhxZ63']
@@ -13,12 +12,16 @@ service cloud.firestore {
     function onlyChanges(keys) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
+    function conv(cid) {
+      return /databases/$(database)/documents/conversations/$(cid);
+    }
 
     match /admins/{uid} {
       allow read: if signedIn() && me() == uid;
       allow write: if false;
     }
 
+    // Profils : chacun le sien ; l'admin voit tout le monde.
     match /users/{uid} {
       allow read: if signedIn() && (me() == uid || isAdmin());
       allow create, update: if signedIn() && me() == uid;
@@ -29,30 +32,48 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Offres et nouveautés : visibles par tous, publiées par l'admin.
+    match /promotions/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     match /catalog/{id} {
       allow read: if true;
       allow write: if isAdmin();
+      // Un client peut seulement réserver des places de formation.
+      allow update: if signedIn()
+        && onlyChanges(['booked'])
+        && request.resource.data.booked is int
+        && request.resource.data.booked > resource.data.get('booked', 0)
+        && (resource.data.get('places', 0) == 0
+            || request.resource.data.booked <= resource.data.places);
+    }
+
+    // Compteur des numéros de commande AS-00001… (augmente de 1 à la fois).
+    match /counters/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.next == 1;
+      allow update: if signedIn() && request.resource.data.next == resource.data.next + 1;
     }
 
     match /orders/{id} {
       allow read: if signedIn() && (resource.data.buyerId == me() || isAdmin());
 
-      // Le client crée sa commande, sans pouvoir fixer le prix final ni le paiement.
       allow create: if signedIn()
         && request.resource.data.buyerId == me()
         && request.resource.data.status == 'nouvelle'
         && request.resource.data.paymentStatus == 'en_attente'
         && request.resource.data.total is int
+        && request.resource.data.number is string
         && !('quotedTotal' in request.resource.data);
 
       allow update: if signedIn() && (
-        // Le patron : statut, prix final (devis), message
         (isAdmin()
           && onlyChanges(['status', 'quotedTotal', 'adminNote', 'updatedAt'])
           && request.resource.data.status in
                ['nouvelle', 'confirmee', 'en_cours', 'prete', 'livree', 'annulee'])
         ||
-        // Le client peut annuler une commande pas encore traitée
         (resource.data.buyerId == me()
           && resource.data.status == 'nouvelle'
           && onlyChanges(['status', 'updatedAt'])
@@ -60,7 +81,33 @@ service cloud.firestore {
       );
     }
 
-    // Paiements : réservé au serveur (Cloud Functions).
+    // Discussions : le client ne voit que les siennes ; l'admin voit tout.
+    match /conversations/{cid} {
+      allow get: if signedIn()
+        && (resource == null || isAdmin() || resource.data.clientId == me());
+      allow list: if signedIn() && (isAdmin() || resource.data.clientId == me());
+      allow create: if signedIn()
+        && (isAdmin() || request.resource.data.clientId == me());
+      allow update: if signedIn() && (
+        isAdmin()
+        || (resource.data.clientId == me()
+            && onlyChanges(['lastMessage', 'lastAt', 'unreadForShop', 'unreadForClient'])));
+      allow delete: if isAdmin();
+
+      match /messages/{mid} {
+        allow read: if signedIn() && (
+          isAdmin()
+          || !exists(conv(cid))
+          || get(conv(cid)).data.clientId == me());
+        allow create: if signedIn() && (
+          (isAdmin() && request.resource.data.senderRole == 'shop')
+          || (getAfter(conv(cid)).data.clientId == me()
+              && request.resource.data.senderId == me()
+              && request.resource.data.senderRole == 'client'));
+        allow update, delete: if false;
+      }
+    }
+
     match /payments/{id} {
       allow read, write: if false;
     }

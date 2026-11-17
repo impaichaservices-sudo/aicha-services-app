@@ -1,107 +1,80 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
+import '../config.dart';
 import '../models/order.dart';
 import '../utils.dart';
+import 'common.dart';
 
-/// Carte de commande, côté client et côté patron.
+/// Carte de commande : numéro, service, quantité, montant, date, statut.
 class OrderCard extends StatelessWidget {
   final ShopOrder order;
   final bool adminView;
+  final VoidCallback? onTap;
   final List<Widget> actions;
 
   const OrderCard({
     super.key,
     required this.order,
     this.adminView = false,
+    this.onTap,
     this.actions = const [],
   });
 
-  Color _statusColor(BuildContext context) {
-    switch (order.status) {
-      case 'livree':
-        return Colors.green;
-      case 'annulee':
-        return Theme.of(context).colorScheme.error;
-      case 'prete':
-        return Colors.teal;
-      case 'nouvelle':
-        return Theme.of(context).colorScheme.primary;
-      default:
-        return Colors.blue;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final t = Theme.of(context).textTheme;
     final o = order;
     final due = o.amountDue;
-
+    final color = statusColor(o.status);
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              Expanded(
-                child: Text(
-                  adminView ? o.buyerName : 'Commande n° ${o.shortId}',
-                  style: t.titleMedium,
-                ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Text('#${o.displayNumber}',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w800, fontSize: 15)),
+                const Spacer(),
+                Pill(orderStatusLabels[o.status] ?? o.status, color: color),
+              ]),
+              const SizedBox(height: 6),
+              if (adminView)
+                Text(o.buyerName,
+                    style: const TextStyle(fontWeight: FontWeight.w700)),
+              Text(o.itemsSummary,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 14.5)),
+              const SizedBox(height: 2),
+              Text(
+                'Quantité : ${o.itemCount} • ${o.isDelivery ? 'Livraison' : 'Retrait'} • ${shortDate(o.createdAt)}',
+                style: const TextStyle(color: Colors.black54, fontSize: 12.5),
               ),
-              Chip(
-                label: Text(orderStatusLabels[o.status] ?? o.status),
-                labelStyle: TextStyle(color: _statusColor(context)),
-                side: BorderSide(color: _statusColor(context)),
-                visualDensity: VisualDensity.compact,
-              ),
-            ]),
-            Text(
-              '${shortDate(o.createdAt)}'
-              '${adminView ? ' • n° ${o.shortId}' : ''}'
-              ' • ${o.isDelivery ? 'Livraison' : 'Retrait en boutique'}',
-              style: t.bodySmall,
-            ),
-            const SizedBox(height: 8),
-            for (final i in o.items) ...[
-              Text('${i.qty} × ${i.name}  —  '
-                  '${i.onQuote ? 'sur devis' : fcfa(i.price * i.qty)}'),
-              if (i.note.isNotEmpty)
-                Text('   📝 ${i.note}', style: t.bodySmall),
-              if (i.fileUrl.isNotEmpty)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: () => launchUrl(Uri.parse(i.fileUrl),
-                        mode: LaunchMode.externalApplication),
-                    icon: const Icon(Icons.attach_file, size: 18),
-                    label: Text(i.fileName.isEmpty ? 'Fichier' : i.fileName,
-                        overflow: TextOverflow.ellipsis),
+              const SizedBox(height: 10),
+              StatusProgress(status: o.status, compact: true),
+              const SizedBox(height: 10),
+              Row(children: [
+                Expanded(
+                  child: Text(
+                    due == null ? 'Prix : devis en préparation' : fcfa(due),
+                    style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                        color: due == null ? const Color(0xFFEF6C00) : AppConfig.black),
                   ),
                 ),
+                if (onTap != null) const Icon(Icons.chevron_right, color: Colors.black38),
+              ]),
+              if (actions.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Wrap(spacing: 8, runSpacing: 8, children: actions),
+              ],
             ],
-            if (o.deliveryFee > 0) Text('Livraison : ${fcfa(o.deliveryFee)}'),
-            const SizedBox(height: 6),
-            Text(
-              due == null ? 'Prix final : devis en préparation' : 'À payer : ${fcfa(due)}',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            if (o.adminNote.isNotEmpty)
-              Text('💬 ${o.adminNote}', style: t.bodySmall),
-            Text('${paymentMethodLabels[o.paymentMethod] ?? o.paymentMethod}'
-                '${o.isOnlinePayment ? ' • ${paymentStatusLabels[o.paymentStatus] ?? o.paymentStatus}' : ''}'),
-            if (adminView) ...[
-              const SizedBox(height: 6),
-              Text('📞 ${o.phone}'),
-              if (o.isDelivery) Text('📍 ${o.address}, ${o.city}'),
-            ],
-            if (actions.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Wrap(spacing: 8, runSpacing: 8, children: actions),
-            ],
-          ],
+          ),
         ),
       ),
     );

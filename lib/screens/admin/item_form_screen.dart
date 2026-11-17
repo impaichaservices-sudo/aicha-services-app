@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -8,9 +9,9 @@ import 'package:image_picker/image_picker.dart';
 import '../../config.dart';
 import '../../models/catalog_item.dart';
 import '../../services/db.dart';
-import '../../services/storage_service.dart';
 import '../../widgets/product_image.dart';
 
+/// Ajout / modification d'un service du catalogue.
 class ItemFormScreen extends StatefulWidget {
   final CatalogItem? item;
   const ItemFormScreen({super.key, this.item});
@@ -23,23 +24,31 @@ class _ItemFormScreenState extends State<ItemFormScreen> {
   final _form = GlobalKey<FormState>();
   late final _name = TextEditingController(text: widget.item?.name ?? '');
   late final _desc = TextEditingController(text: widget.item?.description ?? '');
+  late final _extra = TextEditingController(text: widget.item?.extraInfo ?? '');
   late final _price =
       TextEditingController(text: widget.item?.price.toString() ?? '');
   late final _unit = TextEditingController(text: widget.item?.unit ?? "l'unité");
-  late final _schedule =
-      TextEditingController(text: widget.item?.schedule ?? '');
+  late final _schedule = TextEditingController(text: widget.item?.schedule ?? '');
   late final _places =
       TextEditingController(text: widget.item?.places.toString() ?? '0');
-  late String _type = widget.item?.type ?? 'impression';
-  late bool _requiresFile = widget.item?.requiresFile ?? true;
+  late final _booked =
+      TextEditingController(text: widget.item?.booked.toString() ?? '0');
+  late String _type = itemTypes.containsKey(widget.item?.type)
+      ? widget.item!.type
+      : 'impression';
+  late bool _requiresFile = widget.item?.requiresFile ?? false;
+  late bool _fromPrice = widget.item?.fromPrice ?? false;
+  late bool _available = widget.item?.available ?? true;
+  late bool _popular = widget.item?.popular ?? false;
   File? _image;
+  String? _imageData; // photo compressée, enregistrée dans la base
   bool _busy = false;
 
   bool get _editing => widget.item != null;
 
   @override
   void dispose() {
-    for (final c in [_name, _desc, _price, _unit, _schedule, _places]) {
+    for (final c in [_name, _desc, _extra, _price, _unit, _schedule, _places, _booked]) {
       c.dispose();
     }
     super.dispose();
@@ -48,10 +57,22 @@ class _ItemFormScreenState extends State<ItemFormScreen> {
   Future<void> _pick() async {
     final x = await ImagePicker().pickImage(
       source: ImageSource.gallery,
-      maxWidth: 1200,
-      imageQuality: 80,
+      maxWidth: 800,
+      maxHeight: 800,
+      imageQuality: 60,
     );
-    if (x != null) setState(() => _image = File(x.path));
+    if (x == null) return;
+    final bytes = await x.readAsBytes();
+    if (bytes.length > 600 * 1024) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Photo trop lourde, choisissez-en une autre.')));
+      return;
+    }
+    setState(() {
+      _image = File(x.path);
+      _imageData = 'data:image/jpeg;base64,${base64Encode(bytes)}';
+    });
   }
 
   Future<void> _save() async {
@@ -60,21 +81,23 @@ class _ItemFormScreenState extends State<ItemFormScreen> {
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _busy = true);
     try {
-      var imageUrl = widget.item?.imageUrl ?? '';
-      if (_image != null) {
-        imageUrl = await StorageService.uploadCatalogImage(_image!);
-      }
       final training = _type == 'formation';
       final data = <String, dynamic>{
+        'shopId': widget.item?.shopId ?? AppConfig.defaultShopId,
         'type': _type,
         'name': _name.text.trim(),
         'description': _desc.text.trim(),
+        'extraInfo': _extra.text.trim(),
         'price': int.tryParse(_price.text) ?? 0,
         'unit': _unit.text.trim(),
-        'imageUrl': imageUrl,
+        'fromPrice': _fromPrice,
+        'imageUrl': _imageData ?? widget.item?.imageUrl ?? '',
+        'available': _available,
+        'popular': _popular,
         'requiresFile': training ? false : _requiresFile,
         'schedule': training ? _schedule.text.trim() : '',
         'places': training ? (int.tryParse(_places.text) ?? 0) : 0,
+        'booked': training ? (int.tryParse(_booked.text) ?? 0) : 0,
       };
       if (_editing) {
         await Db.catalog.doc(widget.item!.id).update(data);
@@ -86,7 +109,7 @@ class _ItemFormScreenState extends State<ItemFormScreen> {
         });
       }
       navigator.pop();
-      messenger.showSnackBar(const SnackBar(content: Text('Enregistré')));
+      messenger.showSnackBar(const SnackBar(content: Text('Service enregistré')));
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('Erreur : $e')));
     } finally {
@@ -121,7 +144,7 @@ class _ItemFormScreenState extends State<ItemFormScreen> {
     final training = _type == 'formation';
     return Scaffold(
       appBar: AppBar(
-        title: Text(_editing ? 'Modifier' : 'Nouveau service'),
+        title: Text(_editing ? 'Modifier le service' : 'Nouveau service'),
         actions: [
           if (_editing)
             IconButton(onPressed: _delete, icon: const Icon(Icons.delete_outline)),
@@ -135,7 +158,7 @@ class _ItemFormScreenState extends State<ItemFormScreen> {
             GestureDetector(
               onTap: _pick,
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(16),
                 child: AspectRatio(
                   aspectRatio: 16 / 10,
                   child: _image != null
@@ -159,7 +182,7 @@ class _ItemFormScreenState extends State<ItemFormScreen> {
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
               value: _type,
-              decoration: const InputDecoration(labelText: 'Type'),
+              decoration: const InputDecoration(labelText: 'Catégorie'),
               items: [
                 for (final e in itemTypes.entries)
                   DropdownMenuItem(value: e.key, child: Text(e.value)),
@@ -175,10 +198,10 @@ class _ItemFormScreenState extends State<ItemFormScreen> {
             TextFormField(
               controller: _name,
               decoration: InputDecoration(
-                labelText: 'Nom',
+                labelText: 'Nom du service',
                 hintText: training
                     ? 'Ex : Formation Excel débutant'
-                    : 'Ex : Cartes de visite (100)',
+                    : 'Ex : T-shirt personnalisé',
               ),
               validator: (v) =>
                   (v == null || v.trim().isEmpty) ? 'Champ obligatoire' : null,
@@ -198,12 +221,8 @@ class _ItemFormScreenState extends State<ItemFormScreen> {
                   inputFormatters: digits,
                   decoration: const InputDecoration(
                       labelText: 'Prix (0 = sur devis)', suffixText: 'FCFA'),
-                  validator: (v) {
-                    final n = int.tryParse(v ?? '');
-                    if (n == null || n < 0) return 'Prix invalide';
-                    if (n % 5 != 0) return 'Multiple de 5';
-                    return null;
-                  },
+                  validator: (v) =>
+                      int.tryParse(v ?? '') == null ? 'Prix invalide' : null,
                 ),
               ),
               const SizedBox(width: 12),
@@ -214,48 +233,90 @@ class _ItemFormScreenState extends State<ItemFormScreen> {
                 ),
               ),
             ]),
-            const SizedBox(height: 12),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Afficher « À partir de »'),
+              value: _fromPrice,
+              onChanged: (v) => setState(() => _fromPrice = v),
+            ),
+            TextFormField(
+              controller: _extra,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Informations supplémentaires',
+                hintText: 'Délai, tailles disponibles, matières…',
+              ),
+            ),
+            const SizedBox(height: 8),
             if (training) ...[
+              const SizedBox(height: 4),
               TextFormField(
                 controller: _schedule,
                 decoration: const InputDecoration(
-                  labelText: 'Dates et horaires',
-                  hintText: 'Ex : du 2 au 6 déc., 9h–12h',
+                  labelText: 'Date(s) et horaires',
+                  hintText: 'Ex : du 2 au 6 décembre, 9h–12h',
                 ),
               ),
               const SizedBox(height: 12),
-              TextFormField(
-                controller: _places,
-                keyboardType: TextInputType.number,
-                inputFormatters: digits,
-                decoration: const InputDecoration(
-                    labelText: 'Places disponibles (0 = illimité)'),
-              ),
+              Row(children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _places,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: digits,
+                    decoration: const InputDecoration(
+                        labelText: 'Nombre de places', helperText: '0 = illimité'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    controller: _booked,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: digits,
+                    decoration: const InputDecoration(
+                        labelText: 'Places réservées',
+                        helperText: 'Mis à jour par les commandes'),
+                  ),
+                ),
+              ]),
             ] else
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('Le client doit joindre un fichier'),
-                subtitle: const Text('Document, logo, photo à imprimer…'),
+                title: const Text('Le client doit envoyer un fichier'),
+                subtitle: const Text('Logo, photo, document…'),
                 value: _requiresFile,
                 onChanged: (v) => setState(() => _requiresFile = v),
               ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Disponible'),
+              subtitle: const Text('Désactivez si le service est momentanément indisponible'),
+              value: _available,
+              onChanged: (v) => setState(() => _available = v),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Service populaire'),
+              subtitle: const Text('Mis en avant sur l\'accueil'),
+              value: _popular,
+              onChanged: (v) => setState(() => _popular = v),
+            ),
           ],
         ),
       ),
       bottomNavigationBar: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
           child: FilledButton(
             onPressed: _busy ? null : _save,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: _busy
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('Enregistrer'),
-            ),
+            child: _busy
+                ? const SizedBox(
+                    height: 22,
+                    width: 22,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2.5, color: Colors.white))
+                : const Text('Enregistrer'),
           ),
         ),
       ),

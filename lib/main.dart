@@ -9,6 +9,7 @@ import 'screens/auth_screen.dart';
 import 'screens/home_screen.dart';
 import 'services/auth_service.dart';
 import 'state/cart.dart';
+import 'theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -22,18 +23,7 @@ Future<void> main() async {
   );
 }
 
-ThemeData _theme() => ThemeData(
-      useMaterial3: true,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: AppConfig.green,
-        primary: AppConfig.green,
-        secondary: AppConfig.black,
-      ),
-      appBarTheme: const AppBarTheme(centerTitle: false),
-      inputDecorationTheme: const InputDecorationTheme(
-        border: OutlineInputBorder(),
-      ),
-    );
+ThemeData _theme() => buildTheme();
 
 class ShopApp extends StatelessWidget {
   const ShopApp({super.key});

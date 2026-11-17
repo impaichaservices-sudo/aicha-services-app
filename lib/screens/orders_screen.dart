@@ -1,13 +1,50 @@
 import 'package:flutter/material.dart';
 
+import '../models/app_user.dart';
 import '../models/order.dart';
 import '../services/db.dart';
-import '../services/payment_service.dart';
+import '../widgets/common.dart';
 import '../widgets/order_card.dart';
+import 'order_detail_screen.dart';
 
+const _filters = {
+  'toutes': 'Toutes',
+  'nouvelles': 'Nouvelles',
+  'en_cours': 'En cours',
+  'pretes': 'Prêtes',
+  'terminees': 'Terminées',
+  'devis': 'Mes devis',
+};
+
+bool orderMatches(ShopOrder o, String filter) {
+  switch (filter) {
+    case 'nouvelles':
+      return o.status == 'nouvelle';
+    case 'en_cours':
+      return o.status == 'confirmee' || o.status == 'en_cours';
+    case 'pretes':
+      return o.status == 'prete';
+    case 'terminees':
+      return o.isClosed;
+    case 'devis':
+      return o.quoteNeeded;
+  }
+  return true;
+}
+
+/// Mes commandes : filtres + cartes avec progression.
 class OrdersScreen extends StatefulWidget {
   final String uid;
-  const OrdersScreen({super.key, required this.uid});
+  final AppUser? user;
+  final String initialFilter;
+  final bool standalone;
+  const OrdersScreen({
+    super.key,
+    required this.uid,
+    required this.user,
+    this.initialFilter = 'toutes',
+    this.standalone = false,
+  });
 
   @override
   State<OrdersScreen> createState() => _OrdersScreenState();
@@ -15,75 +52,69 @@ class OrdersScreen extends StatefulWidget {
 
 class _OrdersScreenState extends State<OrdersScreen> {
   late final Stream<List<ShopOrder>> _orders = Db.buyerOrders(widget.uid);
-
-  Future<void> _pay(ShopOrder o) async {
-    try {
-      await PaymentService.pay(orderIds: [o.id], method: o.paymentMethod);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(PaymentService.message(e))));
-    }
-  }
-
-  Future<void> _cancel(ShopOrder o) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Annuler la commande ?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Non')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Oui, annuler')),
-        ],
-      ),
-    );
-    if (ok == true) await Db.setOrderStatus(o.id, 'annulee');
-  }
+  late String _filter = widget.initialFilter;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Mes commandes')),
-      body: StreamBuilder<List<ShopOrder>>(
-        stream: _orders,
-        builder: (context, snap) {
-          if (snap.hasError) return Center(child: Text('Erreur : ${snap.error}'));
-          if (!snap.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          final list = snap.data!;
-          if (list.isEmpty) {
-            return const Center(child: Text('Aucune commande pour le moment.'));
-          }
-          return ListView.builder(
-            padding: const EdgeInsets.all(12),
-            itemCount: list.length,
-            itemBuilder: (_, i) {
-              final o = list[i];
-              return OrderCard(
-                order: o,
-                actions: [
-                  if (o.canPay)
-                    FilledButton.icon(
-                      onPressed: () => _pay(o),
-                      icon: const Icon(Icons.payment),
-                      label: const Text('Payer maintenant'),
-                    ),
-                  if (o.status == 'nouvelle' && o.paymentStatus != 'paye')
-                    OutlinedButton(
-                      onPressed: () => _cancel(o),
-                      child: const Text('Annuler'),
-                    ),
-                ],
+      appBar: AppBar(
+        title: Text(_filter == 'devis' && widget.standalone
+            ? 'Mes devis'
+            : 'Mes commandes'),
+        automaticallyImplyLeading: widget.standalone,
+      ),
+      body: Column(children: [
+        SizedBox(
+          height: 52,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            children: [
+              for (final f in _filters.entries)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text(f.value),
+                    selected: _filter == f.key,
+                    onSelected: (_) => setState(() => _filter = f.key),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: StreamBuilder<List<ShopOrder>>(
+            stream: _orders,
+            builder: (context, snap) {
+              if (snap.hasError) {
+                return Center(child: Text('Erreur : ${snap.error}'));
+              }
+              if (!snap.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              final list =
+                  snap.data!.where((o) => orderMatches(o, _filter)).toList();
+              if (list.isEmpty) {
+                return const EmptyState(
+                  icon: Icons.receipt_long_outlined,
+                  title: 'Aucune commande ici',
+                  message: 'Vos commandes apparaîtront ici avec leur suivi.',
+                );
+              }
+              return ListView.separated(
+                padding: const EdgeInsets.all(16),
+                itemCount: list.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 12),
+                itemBuilder: (_, i) => OrderCard(
+                  order: list[i],
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => OrderDetailScreen(orderId: list[i].id))),
+                ),
               );
             },
-          );
-        },
-      ),
+          ),
+        ),
+      ]),
     );
   }
 }

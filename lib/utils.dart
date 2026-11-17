@@ -23,3 +23,13 @@ Uri whatsappUri(String phone, [String text = '']) {
   return Uri.parse(
       'https://wa.me/$digits${text.isEmpty ? '' : '?text=${Uri.encodeComponent(text)}'}');
 }
+
+/// "14:05" aujourd'hui, sinon "12/11 14:05".
+String timeLabel(DateTime? d) {
+  if (d == null) return 'envoi…';
+  String two(int n) => n.toString().padLeft(2, '0');
+  final now = DateTime.now();
+  final hm = '${two(d.hour)}:${two(d.minute)}';
+  if (d.year == now.year && d.month == now.month && d.day == now.day) return hm;
+  return '${two(d.day)}/${two(d.month)} $hm';
+}

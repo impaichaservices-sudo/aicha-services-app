@@ -1,16 +1,17 @@
-import 'dart:io';
-
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../config.dart';
 import '../models/catalog_item.dart';
 import '../services/auth_service.dart';
-import '../services/storage_service.dart';
+import '../services/db.dart';
 import '../state/cart.dart';
+import '../widgets/common.dart';
 import '../widgets/product_image.dart';
+import 'cart_screen.dart';
+import 'chat_screen.dart';
 
+/// Fiche service : grande image, prix, description, quantité, précisions.
 class ItemDetailScreen extends StatefulWidget {
   final CatalogItem item;
   const ItemDetailScreen({super.key, required this.item});
@@ -22,9 +23,6 @@ class ItemDetailScreen extends StatefulWidget {
 class _ItemDetailScreenState extends State<ItemDetailScreen> {
   final _note = TextEditingController();
   int _qty = 1;
-  File? _file;
-  String _fileName = '';
-  bool _busy = false;
 
   CatalogItem get item => widget.item;
 
@@ -34,172 +32,245 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
     super.dispose();
   }
 
-  Future<void> _pickFile() async {
-    final res = await FilePicker.platform.pickFiles(type: FileType.any);
-    final f = res?.files.single;
-    if (f == null || f.path == null) return;
-    if (f.size > 25 * 1024 * 1024) {
-      _snack('Fichier trop lourd (25 Mo maximum).');
-      return;
-    }
-    setState(() {
-      _file = File(f.path!);
-      _fileName = f.name;
-    });
+  void _add() {
+    context.read<Cart>().add(item, qty: _qty, note: _note.text.trim());
+    final messenger = ScaffoldMessenger.of(context);
+    Navigator.of(context).pop();
+    messenger.showSnackBar(SnackBar(
+      content: Text(item.onQuote
+          ? 'Demande de devis ajoutée au panier'
+          : 'Ajouté au panier'),
+    ));
   }
 
-  void _snack(String msg) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-
-  Future<void> _add() async {
-    if (item.requiresFile && _file == null) {
-      _snack('Merci de joindre votre fichier à imprimer.');
-      return;
-    }
-    final cart = context.read<Cart>();
-    final navigator = Navigator.of(context);
-    final messenger = ScaffoldMessenger.of(context);
-    setState(() => _busy = true);
-    try {
-      var url = '';
-      if (_file != null) {
-        url = await StorageService.uploadClientFile(
-            AuthService.current!.uid, _file!, _fileName);
-      }
-      cart.add(item,
-          qty: _qty, fileUrl: url, fileName: _fileName, note: _note.text.trim());
-      navigator.pop();
-      messenger.showSnackBar(const SnackBar(content: Text('Ajouté au panier')));
-    } catch (e) {
-      _snack('Envoi du fichier impossible : $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+  Future<void> _ask() async {
+    final uid = AuthService.current?.uid;
+    if (uid == null) return;
+    final user = await Db.userStream(uid).first;
+    if (user == null || !mounted) return;
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => ChatScreen(
+        conversationId: Db.generalConversationId(uid),
+        createIfMissing: Db.generalConversationData(user),
+        title: 'Équipe ${AppConfig.shopName}',
+        asShop: false,
+        me: user,
+        initialText: 'Bonjour, je voudrais des informations sur : ${item.name}',
+      ),
+    ));
   }
 
   @override
   Widget build(BuildContext context) {
+    final cartCount = context.watch<Cart>().count;
+    final maxQty = item.places > 0 ? item.placesLeft : 100000;
     final t = Theme.of(context).textTheme;
-    final scheme = Theme.of(context).colorScheme;
-    final maxQty = item.places > 0 ? item.places : 100000;
 
     return Scaffold(
-      appBar: AppBar(title: Text(item.name)),
-      body: ListView(
-        padding: const EdgeInsets.only(bottom: 24),
-        children: [
-          AspectRatio(aspectRatio: 16 / 10, child: ProductImage(item.imageUrl)),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(itemTypes[item.type] ?? item.type,
-                    style: t.labelLarge?.copyWith(color: scheme.primary)),
-                Text(item.name, style: t.headlineSmall),
-                const SizedBox(height: 8),
-                Text(item.priceLabel,
-                    style: t.titleLarge?.copyWith(
-                        color: scheme.primary, fontWeight: FontWeight.bold)),
-                if (item.onQuote)
-                  const Text('Nous vous enverrons le prix exact après avoir '
-                      'vu votre demande.'),
-                if (item.isTraining) ...[
-                  const SizedBox(height: 12),
-                  if (item.schedule.isNotEmpty)
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.event),
-                      title: Text(item.schedule),
-                    ),
-                  if (item.places > 0)
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.groups),
-                      title: Text('${item.places} places disponibles'),
-                    ),
-                ],
-                const Divider(height: 32),
-                Text(item.description.isEmpty ? '' : item.description),
-                const SizedBox(height: 16),
-
-                // Quantité / participants
-                Row(children: [
-                  Expanded(
-                    child: Text(item.isTraining ? 'Participants' : 'Quantité',
-                        style: t.titleMedium),
-                  ),
-                  IconButton.outlined(
-                    onPressed: _qty > 1 ? () => setState(() => _qty--) : null,
-                    icon: const Icon(Icons.remove),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Text('$_qty', style: t.titleLarge),
-                  ),
-                  IconButton.outlined(
-                    onPressed:
-                        _qty < maxQty ? () => setState(() => _qty++) : null,
-                    icon: const Icon(Icons.add),
-                  ),
-                ]),
-                const SizedBox(height: 16),
-
-                // Fichier à imprimer
-                if (item.acceptsFile) ...[
-                  Text(
-                      item.requiresFile
-                          ? 'Votre fichier (obligatoire)'
-                          : 'Votre fichier (facultatif)',
-                      style: t.titleMedium),
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    onPressed: _busy ? null : _pickFile,
-                    icon: Icon(_file == null ? Icons.attach_file : Icons.check),
-                    label: Text(
-                      _file == null ? 'Joindre un fichier (PDF, image, Word…)' : _fileName,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-
-                TextField(
-                  controller: _note,
-                  maxLines: 3,
-                  decoration: InputDecoration(
-                    labelText: item.isTraining
-                        ? 'Noms des participants / remarques'
-                        : 'Précisions (format, papier, couleur, recto-verso…)',
-                  ),
+      backgroundColor: Colors.white,
+      body: CustomScrollView(
+        slivers: [
+          SliverAppBar(
+            expandedHeight: 300,
+            pinned: true,
+            backgroundColor: Colors.white,
+            actions: [
+              IconButton(
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const CartScreen(user: null))),
+                icon: Badge(
+                  isLabelVisible: cartCount > 0,
+                  label: Text('$cartCount'),
+                  child: const Icon(Icons.shopping_bag_outlined),
                 ),
-              ],
+              ),
+            ],
+            flexibleSpace: FlexibleSpaceBar(
+              background: Hero(
+                tag: 'item-${item.id}',
+                child: ProductImage(item.imageUrl),
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Pill(itemTypes[item.type] ?? item.type,
+                        color: AppConfig.green, icon: itemTypeIcons[item.type]),
+                    const SizedBox(width: 8),
+                    item.canOrder
+                        ? const Pill('Disponible',
+                            color: AppConfig.green, icon: Icons.check_circle)
+                        : Pill(item.isFull ? 'Complet' : 'Indisponible',
+                            color: const Color(0xFFC62828),
+                            icon: Icons.block),
+                  ]),
+                  const SizedBox(height: 12),
+                  Text(item.name,
+                      style: const TextStyle(
+                          fontSize: 24, fontWeight: FontWeight.w800, height: 1.2)),
+                  const SizedBox(height: 8),
+                  Text(item.onQuote ? 'Prix sur devis' : item.priceLabel,
+                      style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          color: item.onQuote
+                              ? const Color(0xFFEF6C00)
+                              : AppConfig.green)),
+                  if (item.onQuote)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4),
+                      child: Text(
+                          'Envoyez votre demande : nous vous communiquerons le prix exact.',
+                          style: TextStyle(color: Colors.black54)),
+                    ),
+                  if (item.isTraining) ...[
+                    const SizedBox(height: 16),
+                    _infoRow(Icons.event_rounded, 'Date',
+                        item.schedule.isEmpty ? 'À confirmer' : item.schedule),
+                    if (item.places > 0) ...[
+                      _infoRow(Icons.groups_rounded, 'Places', '${item.places}'),
+                      _infoRow(Icons.event_seat_rounded, 'Places restantes',
+                          '${item.placesLeft}'),
+                    ],
+                  ],
+                  if (item.description.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Text(item.description,
+                        style: t.bodyLarge?.copyWith(height: 1.4)),
+                  ],
+                  if (item.extraInfo.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppConfig.paleGreen,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.info_outline, color: AppConfig.green),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(item.extraInfo)),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  Row(children: [
+                    Expanded(
+                      child: Text(item.isTraining ? 'Participants' : 'Quantité',
+                          style: const TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w700)),
+                    ),
+                    _qtyButton(Icons.remove,
+                        _qty > 1 ? () => setState(() => _qty--) : null),
+                    SizedBox(
+                      width: 48,
+                      child: Text('$_qty',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                              fontSize: 20, fontWeight: FontWeight.w800)),
+                    ),
+                    _qtyButton(Icons.add,
+                        _qty < maxQty ? () => setState(() => _qty++) : null),
+                  ]),
+                  const SizedBox(height: 20),
+                  TextField(
+                    controller: _note,
+                    maxLines: 4,
+                    minLines: 3,
+                    decoration: InputDecoration(
+                      labelText: 'Précisions concernant votre commande',
+                      alignLabelWithHint: true,
+                      hintText: item.isTraining
+                          ? 'Noms des participants, questions…'
+                          : 'Couleur, taille, texte, noms, modèle, autres instructions…',
+                    ),
+                  ),
+                  if (item.acceptsFile) ...[
+                    const SizedBox(height: 12),
+                    const Row(children: [
+                      Icon(Icons.attach_file, size: 18, color: Colors.black54),
+                      SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Vous pourrez envoyer votre fichier (logo, photo, PDF…) dans la discussion de votre commande.',
+                          style: TextStyle(color: Colors.black54, fontSize: 13),
+                        ),
+                      ),
+                    ]),
+                  ],
+                  const SizedBox(height: 12),
+                  Center(
+                    child: TextButton.icon(
+                      onPressed: _ask,
+                      icon: const Icon(Icons.chat_bubble_outline),
+                      label: const Text('Poser une question sur ce service'),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
       ),
       bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            border: Border(top: BorderSide(color: Color(0xFFE6EAE4))),
+          ),
           child: FilledButton.icon(
-            onPressed: _busy ? null : _add,
-            icon: _busy
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.add_shopping_cart),
-            label: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Text(_busy
-                  ? 'Envoi du fichier…'
-                  : item.isTraining
-                      ? 'Réserver ma place'
-                      : 'Ajouter au panier'),
-            ),
+            onPressed: item.canOrder ? _add : null,
+            icon: Icon(item.onQuote
+                ? Icons.request_quote_outlined
+                : Icons.add_shopping_cart_rounded),
+            label: Text(!item.canOrder
+                ? (item.isFull ? 'Complet' : 'Indisponible')
+                : item.onQuote
+                    ? 'Demander un devis'
+                    : item.isTraining
+                        ? 'Réserver ma place'
+                        : 'Ajouter au panier'),
           ),
         ),
       ),
     );
   }
+
+  Widget _infoRow(IconData icon, String label, String value) => Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Row(children: [
+          Icon(icon, size: 20, color: AppConfig.green),
+          const SizedBox(width: 8),
+          Text('$label : ', style: const TextStyle(color: Colors.black54)),
+          Expanded(
+            child: Text(value,
+                style: const TextStyle(fontWeight: FontWeight.w700)),
+          ),
+        ]),
+      );
+
+  Widget _qtyButton(IconData icon, VoidCallback? onTap) => Material(
+        color: onTap == null ? const Color(0xFFF0F2EE) : AppConfig.paleGreen,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: SizedBox(
+            width: 44,
+            height: 44,
+            child: Icon(icon,
+                color: onTap == null ? Colors.black26 : AppConfig.green),
+          ),
+        ),
+      );
 }

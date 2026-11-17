@@ -95,7 +95,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 children: [
                   Image.asset(AppConfig.logo, height: 200),
                   const SizedBox(height: 4),
-                  Text(AppConfig.tagline,
+                  Text(AppConfig.slogan,
                       textAlign: TextAlign.center,
                       style: TextStyle(color: scheme.outline)),
                   const SizedBox(height: 32),

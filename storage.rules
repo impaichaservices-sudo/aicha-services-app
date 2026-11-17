@@ -1,0 +1,25 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isAdmin() {
+      return request.auth != null &&
+        firestore.exists(/databases/(default)/documents/admins/$(request.auth.uid));
+    }
+
+    // Photos du catalogue : visibles par tous, modifiables par le patron.
+    match /catalog/{file} {
+      allow read: if true;
+      allow write: if isAdmin()
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // Fichiers envoyés par les clients (à imprimer) : 25 Mo max.
+    match /uploads/{uid}/{file} {
+      allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.size < 25 * 1024 * 1024;
+    }
+  }
+}

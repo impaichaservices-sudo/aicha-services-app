@@ -1,0 +1,66 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function me() { return request.auth.uid; }
+    // Le patron : un document admins/{uid} créé à la main dans la console.
+    function isAdmin() {
+      return signedIn() && exists(/databases/$(database)/documents/admins/$(me()));
+    }
+    function onlyChanges(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    match /admins/{uid} {
+      allow read: if signedIn() && me() == uid;
+      allow write: if false;
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (me() == uid || isAdmin());
+      allow create, update: if signedIn() && me() == uid;
+    }
+
+    match /settings/{doc} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /catalog/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /orders/{id} {
+      allow read: if signedIn() && (resource.data.buyerId == me() || isAdmin());
+
+      // Le client crée sa commande, sans pouvoir fixer le prix final ni le paiement.
+      allow create: if signedIn()
+        && request.resource.data.buyerId == me()
+        && request.resource.data.status == 'nouvelle'
+        && request.resource.data.paymentStatus == 'en_attente'
+        && request.resource.data.total is int
+        && !('quotedTotal' in request.resource.data);
+
+      allow update: if signedIn() && (
+        // Le patron : statut, prix final (devis), message
+        (isAdmin()
+          && onlyChanges(['status', 'quotedTotal', 'adminNote', 'updatedAt'])
+          && request.resource.data.status in
+               ['nouvelle', 'confirmee', 'en_cours', 'prete', 'livree', 'annulee'])
+        ||
+        // Le client peut annuler une commande pas encore traitée
+        (resource.data.buyerId == me()
+          && resource.data.status == 'nouvelle'
+          && onlyChanges(['status', 'updatedAt'])
+          && request.resource.data.status == 'annulee')
+      );
+    }
+
+    // Paiements : réservé au serveur (Cloud Functions).
+    match /payments/{id} {
+      allow read, write: if false;
+    }
+  }
+}

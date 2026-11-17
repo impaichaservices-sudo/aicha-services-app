@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../config.dart';
+import '../models/shop_settings.dart';
 import '../services/auth_service.dart';
+import '../services/db.dart';
+import '../utils.dart';
 
+/// Connexion / inscription par NUMÉRO DE TÉLÉPHONE + mot de passe.
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
 
@@ -14,15 +19,16 @@ class _AuthScreenState extends State<AuthScreen> {
   final _form = GlobalKey<FormState>();
   final _name = TextEditingController();
   final _phone = TextEditingController();
-  final _email = TextEditingController();
   final _password = TextEditingController();
+  final _password2 = TextEditingController();
   bool _register = false;
   bool _busy = false;
+  bool _hide = true;
   String? _error;
 
   @override
   void dispose() {
-    for (final c in [_name, _phone, _email, _password]) {
+    for (final c in [_name, _phone, _password, _password2]) {
       c.dispose();
     }
     super.dispose();
@@ -39,11 +45,10 @@ class _AuthScreenState extends State<AuthScreen> {
         await AuthService.register(
           name: _name.text,
           phone: _phone.text,
-          email: _email.text,
           password: _password.text,
         );
       } else {
-        await AuthService.signIn(_email.text, _password.text);
+        await AuthService.signIn(_phone.text, _password.text);
       }
     } catch (e) {
       setState(() => _error = AuthService.message(e));
@@ -52,20 +57,24 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
+  /// Mot de passe oublié : le client écrit à la boutique sur WhatsApp.
   Future<void> _forgot() async {
-    if (_email.text.trim().isEmpty) {
-      setState(() => _error = 'Saisissez d\'abord votre e-mail.');
+    ShopSettings s = const ShopSettings();
+    try {
+      s = ShopSettings.fromDoc(await Db.settingsDoc.get());
+    } catch (_) {}
+    final contact = s.whatsapp.isNotEmpty ? s.whatsapp : s.phone;
+    if (!mounted) return;
+    if (contact.isEmpty) {
+      setState(() => _error =
+          'Contactez ${AppConfig.shopName} pour réinitialiser votre mot de passe.');
       return;
     }
-    try {
-      await AuthService.resetPassword(_email.text);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('E-mail de réinitialisation envoyé.'),
-      ));
-    } catch (e) {
-      setState(() => _error = AuthService.message(e));
-    }
+    await launchUrl(
+      whatsappUri(contact,
+          'Bonjour, j\'ai oublié mon mot de passe. Mon numéro : ${_phone.text.trim()}'),
+      mode: LaunchMode.externalApplication,
+    );
   }
 
   String? _required(String? v) =>
@@ -93,36 +102,57 @@ class _AuthScreenState extends State<AuthScreen> {
                   if (_register) ...[
                     TextFormField(
                       controller: _name,
-                      decoration: const InputDecoration(labelText: 'Nom complet'),
-                      validator: _required,
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: _phone,
-                      keyboardType: TextInputType.phone,
+                      textCapitalization: TextCapitalization.words,
                       decoration: const InputDecoration(
-                        labelText: 'Téléphone',
-                        hintText: '70 00 00 00',
+                        labelText: 'Nom complet',
+                        prefixIcon: Icon(Icons.person_outline),
                       ),
                       validator: _required,
                     ),
                     const SizedBox(height: 12),
                   ],
                   TextFormField(
-                    controller: _email,
-                    keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(labelText: 'E-mail'),
-                    validator: _required,
+                    controller: _phone,
+                    keyboardType: TextInputType.phone,
+                    decoration: const InputDecoration(
+                      labelText: 'Numéro de téléphone',
+                      hintText: '70 00 00 00',
+                      prefixIcon: Icon(Icons.phone_android),
+                    ),
+                    validator: (v) => AuthService.isValidPhone(v ?? '')
+                        ? null
+                        : 'Numéro invalide (8 chiffres)',
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: _password,
-                    obscureText: true,
-                    decoration: const InputDecoration(labelText: 'Mot de passe'),
+                    obscureText: _hide,
+                    decoration: InputDecoration(
+                      labelText: 'Mot de passe',
+                      prefixIcon: const Icon(Icons.lock_outline),
+                      suffixIcon: IconButton(
+                        icon: Icon(_hide ? Icons.visibility : Icons.visibility_off),
+                        onPressed: () => setState(() => _hide = !_hide),
+                      ),
+                    ),
                     validator: (v) => (v == null || v.length < 6)
                         ? '6 caractères minimum'
                         : null,
                   ),
+                  if (_register) ...[
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _password2,
+                      obscureText: _hide,
+                      decoration: const InputDecoration(
+                        labelText: 'Confirmer le mot de passe',
+                        prefixIcon: Icon(Icons.lock_outline),
+                      ),
+                      validator: (v) => v != _password.text
+                          ? 'Les mots de passe ne correspondent pas'
+                          : null,
+                    ),
+                  ],
                   if (_error != null) ...[
                     const SizedBox(height: 12),
                     Text(_error!, style: TextStyle(color: scheme.error)),
@@ -153,7 +183,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   if (!_register)
                     TextButton(
                       onPressed: _forgot,
-                      child: const Text('Mot de passe oublié'),
+                      child: const Text('Mot de passe oublié ?'),
                     ),
                 ],
               ),

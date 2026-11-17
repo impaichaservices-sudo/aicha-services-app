@@ -37,6 +37,8 @@ Tout se fait **depuis un téléphone** : GitHub compile l'APK pour vous.
 
 1. <https://console.firebase.google.com> → **Ajouter un projet**.
 2. **Authentication** → Commencer → activez **E-mail/Mot de passe**.
+   (Les clients se connectent avec **numéro + mot de passe** ; l'appli
+   utilise cette méthode en coulisse, sans e-mail ni SMS.)
 3. **Firestore Database** → Créer → région Europe → mode production.
 4. **Passez au forfait Blaze** (⚙️ → Utilisation et facturation). Carte
    bancaire demandée, mais l'usage reste **gratuit** dans les quotas.
@@ -78,8 +80,9 @@ Chaque modification poussée sur `main` recompile l'APK automatiquement.
 
 ## Étape 6 — Devenir « patron » dans l'appli
 
-1. Installez l'APK et **créez votre compte** comme un client.
-2. Console Firebase → **Authentication** → copiez votre **UID**.
+1. Installez l'APK et **créez votre compte** avec votre numéro, comme un client.
+2. Console Firebase → **Authentication** → repérez la ligne
+   `223XXXXXXXX@clients.aichaservices.app` (votre numéro) → copiez son **UID**.
 3. **Firestore** → **Commencer une collection** → nom : `admins` →
    ID du document : **votre UID** → champ `role` = `patron` → Enregistrer.
 4. Rouvrez l'appli : l'onglet **Gestion** apparaît.
@@ -104,6 +107,13 @@ Sans cette étape, le **paiement en espèces fonctionne déjà**.
 4. **Actions** → « Déployer Firebase » → **Run workflow**.
 
 ---
+
+## Mot de passe oublié
+
+Le bouton « Mot de passe oublié ? » ouvre WhatsApp vers la boutique. Pour
+débloquer un client : console Firebase → Authentication → supprimez son
+compte ; il pourra se réinscrire avec le même numéro (ses anciennes
+commandes resteront visibles par vous dans Gestion).
 
 ## Sécurité
 

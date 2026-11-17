@@ -23,11 +23,7 @@ class ProfileScreen extends StatelessWidget {
             ListTile(
               leading: const CircleAvatar(child: Icon(Icons.person)),
               title: Text(u.name),
-              subtitle: Text(u.email),
-            ),
-            ListTile(
-              leading: const Icon(Icons.phone_android),
-              title: Text(u.phone.isEmpty ? '—' : u.phone),
+              subtitle: Text(u.phone),
             ),
           ],
           const Divider(),

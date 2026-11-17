@@ -119,7 +119,8 @@ exports.initPayment = onCall(async (req) => {
     customer_id: req.auth.uid,
     customer_name: firstName || 'Client',
     customer_surname: rest.join(' ') || firstName || 'Client',
-    customer_email: req.auth.token.email || 'client@aichaservices.ml',
+    // Les clients se connectent par numéro : pas de vraie adresse e-mail.
+    customer_email: 'client@aichaservices.ml',
     customer_phone_number: normalizePhone(customer.phone),
     customer_address: customer.address || 'Bamako',
     customer_city: customer.city || 'Bamako',

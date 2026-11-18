@@ -5,9 +5,11 @@ import 'package:provider/provider.dart';
 
 import 'config.dart';
 import 'firebase_options.dart';
+import 'nav.dart';
 import 'screens/auth_screen.dart';
 import 'screens/home_screen.dart';
 import 'services/auth_service.dart';
+import 'services/session.dart';
 import 'state/cart.dart';
 import 'theme.dart';
 
@@ -19,7 +21,13 @@ Future<void> main() async {
   }
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(
-    ChangeNotifierProvider(create: (_) => Cart(), child: const ShopApp()),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => Cart()),
+        ChangeNotifierProvider(create: (_) => SessionNotifier()),
+      ],
+      child: const ShopApp(),
+    ),
   );
 }
 
@@ -31,6 +39,8 @@ class ShopApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
+      scaffoldMessengerKey: messengerKey,
       title: AppConfig.shortName,
       debugShowCheckedModeBanner: false,
       theme: _theme(),

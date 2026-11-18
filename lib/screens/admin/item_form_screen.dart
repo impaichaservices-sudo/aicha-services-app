@@ -9,12 +9,14 @@ import 'package:image_picker/image_picker.dart';
 import '../../config.dart';
 import '../../models/catalog_item.dart';
 import '../../services/db.dart';
+import '../../services/session.dart';
 import '../../widgets/product_image.dart';
 
 /// Ajout / modification d'un service du catalogue.
 class ItemFormScreen extends StatefulWidget {
   final CatalogItem? item;
-  const ItemFormScreen({super.key, this.item});
+  final String? shopId; // boutique de l'équipe (null = Super Admin)
+  const ItemFormScreen({super.key, this.item, this.shopId});
 
   @override
   State<ItemFormScreen> createState() => _ItemFormScreenState();
@@ -40,6 +42,10 @@ class _ItemFormScreenState extends State<ItemFormScreen> {
   late bool _fromPrice = widget.item?.fromPrice ?? false;
   late bool _available = widget.item?.available ?? true;
   late bool _popular = widget.item?.popular ?? false;
+  late String _shop = widget.shopId ??
+      (widget.item == null || widget.item!.shopId == 'main'
+          ? 'all'
+          : widget.item!.shopId);
   File? _image;
   String? _imageData; // photo compressée, enregistrée dans la base
   bool _busy = false;
@@ -83,7 +89,7 @@ class _ItemFormScreenState extends State<ItemFormScreen> {
     try {
       final training = _type == 'formation';
       final data = <String, dynamic>{
-        'shopId': widget.item?.shopId ?? AppConfig.defaultShopId,
+        'shopId': widget.shopId ?? _shop,
         'type': _type,
         'name': _name.text.trim(),
         'description': _desc.text.trim(),
@@ -180,6 +186,24 @@ class _ItemFormScreenState extends State<ItemFormScreen> {
               ),
             ),
             const SizedBox(height: 16),
+            if (widget.shopId == null && sessionOf(context).shops.isNotEmpty) ...[
+              DropdownButtonFormField<String>(
+                value: _shop == 'all' ||
+                        sessionOf(context).shops.any((x) => x.id == _shop)
+                    ? _shop
+                    : 'all',
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Boutique'),
+                items: [
+                  const DropdownMenuItem(
+                      value: 'all', child: Text('Toutes les boutiques')),
+                  for (final sh in sessionOf(context).shops)
+                    DropdownMenuItem(value: sh.id, child: Text(sh.name)),
+                ],
+                onChanged: (v) => setState(() => _shop = v ?? 'all'),
+              ),
+              const SizedBox(height: 12),
+            ],
             DropdownButtonFormField<String>(
               value: _type,
               decoration: const InputDecoration(labelText: 'Catégorie'),

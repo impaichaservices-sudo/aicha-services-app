@@ -4,6 +4,7 @@ import '../../config.dart';
 import '../../models/app_user.dart';
 import '../../models/chat.dart';
 import '../../services/db.dart';
+import '../../services/session.dart';
 import '../../utils.dart';
 import '../../widgets/common.dart';
 import '../chat_screen.dart';
@@ -11,7 +12,8 @@ import '../chat_screen.dart';
 /// Gestion → Discussions : toutes les conversations, les non lues en premier.
 class AdminConversationsScreen extends StatefulWidget {
   final AppUser me;
-  const AdminConversationsScreen({super.key, required this.me});
+  final String? shopId;
+  const AdminConversationsScreen({super.key, required this.me, this.shopId});
 
   @override
   State<AdminConversationsScreen> createState() =>
@@ -19,7 +21,8 @@ class AdminConversationsScreen extends StatefulWidget {
 }
 
 class _AdminConversationsScreenState extends State<AdminConversationsScreen> {
-  late final Stream<List<Conversation>> _convs = Db.allConversations();
+  late final Stream<List<Conversation>> _convs =
+      Db.allConversations(shopId: widget.shopId);
   bool _unreadOnly = false;
 
   @override
@@ -78,8 +81,13 @@ class _AdminConversationsScreenState extends State<AdminConversationsScreen> {
                                       ? FontWeight.w900
                                       : FontWeight.w600),
                             ),
-                            subtitle: Text(c.lastMessage,
-                                maxLines: 1, overflow: TextOverflow.ellipsis),
+                            subtitle: Text(
+                                widget.shopId == null &&
+                                        sessionOf(context).shops.isNotEmpty
+                                    ? '${sessionOf(context).shopById(c.shopId).name}\n${c.lastMessage}'
+                                    : c.lastMessage,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis),
                             trailing: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               crossAxisAlignment: CrossAxisAlignment.end,
@@ -103,6 +111,8 @@ class _AdminConversationsScreenState extends State<AdminConversationsScreen> {
                                   asShop: true,
                                   me: widget.me,
                                   clientPhone: c.clientPhone,
+                                  shopId: c.shopId,
+                                  orderId: c.orderId,
                                 ),
                               ),
                             ),

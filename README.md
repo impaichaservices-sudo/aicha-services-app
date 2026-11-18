@@ -2,6 +2,11 @@
 
 > **Votre satisfaction est notre engagement**
 
+## Version 3 — complète
+
+Voir **GUIDE_CONFIGURATION.md** : boutiques, responsables, agents,
+permissions, fichiers (Cloudinary), notifications push (Cloudflare).
+
 ## Version 2 (étape 1 de l'évolution)
 
 - Nouvelle identité visuelle (vert, noir, blanc), nouvel accueil :

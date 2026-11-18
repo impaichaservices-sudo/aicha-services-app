@@ -4,9 +4,10 @@ import 'package:provider/provider.dart';
 import '../config.dart';
 import '../models/app_user.dart';
 import '../models/order.dart';
-import '../models/shop_settings.dart';
+import '../models/shop.dart';
 import '../services/auth_service.dart';
 import '../services/db.dart';
+import '../services/session.dart';
 import '../state/cart.dart';
 import '../utils.dart';
 import 'order_detail_screen.dart';
@@ -27,7 +28,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   final _city = TextEditingController(text: 'Bamako');
   final _address = TextEditingController();
   final _info = TextEditingController();
-  late final Stream<ShopSettings> _settings = Db.settings();
   String _delivery = 'retrait';
   final String _method = 'especes';
   bool _busy = false;
@@ -43,14 +43,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   String? _required(String? v) =>
       (v == null || v.trim().isEmpty) ? 'Champ obligatoire' : null;
 
-  Future<void> _confirm(ShopSettings settings) async {
+  Future<void> _confirm(Shop shop) async {
     if (!_form.currentState!.validate()) return;
     final cart = context.read<Cart>();
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
-    final fee = _delivery == 'livraison' ? settings.deliveryFee : 0;
+    final fee = _delivery == 'livraison' ? shop.deliveryFee : 0;
     final order = ShopOrder(
-      shopId: widget.user?.shopId ?? AppConfig.defaultShopId,
+      shopId: shop.id,
       buyerId: AuthService.current!.uid,
       buyerName: _name.text.trim(),
       phone: _phone.text.trim(),
@@ -78,7 +78,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
     setState(() => _busy = true);
     try {
-      final id = await Db.createOrder(order, bookings: cart.bookings);
+      final id = await Db.createOrder(order,
+          bookings: cart.bookings, shopCode: shop.code);
       cart.clear();
       navigator.popUntil((r) => r.isFirst);
       navigator.push(MaterialPageRoute(
@@ -93,10 +94,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   @override
   Widget build(BuildContext context) {
     final cart = context.watch<Cart>();
-    return StreamBuilder<ShopSettings>(
-      stream: _settings,
-      builder: (context, snap) {
-        final s = snap.data ?? const ShopSettings();
+    final shop = sessionOf(context).myShop;
+    return Builder(
+      builder: (context) {
+        final s = shop;
         final fee = _delivery == 'livraison' ? s.deliveryFee : 0;
         final total = cart.subtotal + fee;
         return Scaffold(
@@ -141,8 +142,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(AppConfig.shopName,
-                              style: TextStyle(fontWeight: FontWeight.w800)),
+                          Text(s.id == 'main' ? AppConfig.shopName : s.name,
+                              style: const TextStyle(fontWeight: FontWeight.w800)),
                           if (s.address.isNotEmpty) Text('📍 ${s.address}'),
                           if (s.hours.isNotEmpty) Text('🕒 ${s.hours}'),
                           if (s.address.isEmpty)
@@ -208,7 +209,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
               child: FilledButton(
-                onPressed: _busy || cart.isEmpty ? null : () => _confirm(s),
+                onPressed: _busy || cart.isEmpty ? null : () => _confirm(shop),
                 child: _busy
                     ? const SizedBox(
                         height: 22,

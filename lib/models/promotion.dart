@@ -11,6 +11,7 @@ class Promotion {
   final DateTime? start;
   final DateTime? end;
   final bool active;
+  final List<String> shops; // ['all'] ou ids des boutiques
   final DateTime? createdAt;
 
   const Promotion({
@@ -23,8 +24,12 @@ class Promotion {
     required this.start,
     required this.end,
     required this.active,
+    this.shops = const ['all'],
     this.createdAt,
   });
+
+  bool visibleIn(String shopId) =>
+      shops.isEmpty || shops.contains('all') || shops.contains(shopId);
 
   /// Visible aujourd'hui ?
   bool get isLive {
@@ -49,6 +54,9 @@ class Promotion {
       start: (d['start'] as Timestamp?)?.toDate(),
       end: (d['end'] as Timestamp?)?.toDate(),
       active: (d['active'] ?? true) as bool,
+      shops: ((d['shops'] as List?) ?? const ['all'])
+          .map((e) => e.toString())
+          .toList(),
       createdAt: (d['createdAt'] as Timestamp?)?.toDate(),
     );
   }

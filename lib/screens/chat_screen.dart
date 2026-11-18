@@ -5,8 +5,9 @@ import '../config.dart';
 import '../models/app_user.dart';
 import '../models/catalog_item.dart';
 import '../models/chat.dart';
-import '../models/shop_settings.dart';
 import '../services/db.dart';
+import '../services/file_service.dart';
+import '../services/session.dart';
 import '../utils.dart';
 import '../widgets/item_card.dart';
 import '../widgets/product_image.dart';
@@ -21,6 +22,8 @@ class ChatScreen extends StatefulWidget {
   final AppUser me;
   final String initialText;
   final String clientPhone; // côté équipe : pour appeler / WhatsApp
+  final String shopId;
+  final String orderId;
 
   const ChatScreen({
     super.key,
@@ -32,6 +35,8 @@ class ChatScreen extends StatefulWidget {
     required this.me,
     this.initialText = '',
     this.clientPhone = '',
+    this.shopId = 'main',
+    this.orderId = '',
   });
 
   @override
@@ -73,7 +78,9 @@ class _ChatScreenState extends State<ChatScreen> {
         createIfMissing: widget.createIfMissing,
         senderId: widget.me.uid,
         senderRole: widget.asShop ? 'shop' : 'client',
-        senderName: widget.asShop ? AppConfig.shopName : widget.me.name,
+        senderName: widget.asShop
+            ? sessionOf(context, listen: false).teamName(widget.shopId)
+            : widget.me.name,
         text: body,
         type: type,
         itemId: item?.id ?? '',
@@ -103,13 +110,69 @@ class _ChatScreenState extends State<ChatScreen> {
     if (fromOther) Db.markRead(widget.conversationId, asShop: widget.asShop);
   }
 
+  String _err(Object e) => e.toString().replaceFirst('Exception: ', '');
+
+  Future<void> _uploadFile() async {
+    setState(() => _sending = true);
+    try {
+      final up = await FileService.pickAndUpload(
+          folder: 'aicha/${widget.shopId}');
+      if (up == null) return;
+      await Db.sendMessage(
+        conversationId: widget.conversationId,
+        createIfMissing: widget.createIfMissing,
+        senderId: widget.me.uid,
+        senderRole: widget.asShop ? 'shop' : 'client',
+        senderName: widget.asShop
+            ? sessionOf(context, listen: false).teamName(widget.shopId)
+            : widget.me.name,
+        text: '',
+        type: 'file',
+        fileUrl: up.url,
+        fileName: up.name,
+      );
+      await Db.addFile({
+        'ownerId': widget.me.uid,
+        'shopId': widget.shopId,
+        'conversationId': widget.conversationId,
+        'orderId': widget.orderId,
+        'name': up.name,
+        'url': up.url,
+        'size': up.size,
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Fichier envoyé : ${up.name}')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(_err(e))));
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
   Future<void> _attach() async {
+    final filesOn = await FileService.enabled();
+    if (!mounted) return;
     if (widget.asShop) {
       await showModalBottomSheet<void>(
         context: context,
         showDragHandle: true,
         builder: (ctx) => SafeArea(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
+            if (filesOn)
+              ListTile(
+                leading: const Icon(Icons.upload_file, color: AppConfig.green),
+                title: const Text('Envoyer un fichier'),
+                subtitle: const Text('Photo, PDF, Word…'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _uploadFile();
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.design_services, color: AppConfig.green),
               title: const Text('Proposer un service'),
@@ -137,16 +200,25 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
-    // Côté client : l'envoi de fichiers dans l'appli arrive à l'étape 3.
-    final settings = ShopSettings.fromDoc(await Db.settingsDoc.get());
-    final contact =
-        settings.whatsapp.isNotEmpty ? settings.whatsapp : settings.phone;
-    if (!mounted) return;
+    // Côté client : fichier dans l'appli (si activé) ou par WhatsApp.
+    final contact = sessionOf(context, listen: false).shopById(widget.shopId).contact;
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       builder: (ctx) => SafeArea(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const Icon(Icons.upload_file, color: AppConfig.green),
+            title: const Text('Envoyer un fichier'),
+            subtitle: Text(filesOn
+                ? 'Photo, PDF, Word… (10 Mo max.)'
+                : 'Bientôt disponible : utilisez WhatsApp'),
+            enabled: filesOn,
+            onTap: () {
+              Navigator.pop(ctx);
+              _uploadFile();
+            },
+          ),
           ListTile(
             leading: const Icon(Icons.chat, color: AppConfig.green),
             title: const Text('Envoyer un fichier par WhatsApp'),
@@ -160,12 +232,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 mode: LaunchMode.externalApplication,
               );
             },
-          ),
-          const ListTile(
-            leading: Icon(Icons.upload_file, color: Colors.black38),
-            title: Text('Envoyer depuis l\'application'),
-            subtitle: Text('Bientôt disponible'),
-            enabled: false,
           ),
         ]),
       ),

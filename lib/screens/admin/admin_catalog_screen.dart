@@ -3,13 +3,15 @@ import 'package:flutter/material.dart';
 import '../../config.dart';
 import '../../models/catalog_item.dart';
 import '../../services/db.dart';
+import '../../services/session.dart';
 import '../../widgets/common.dart';
 import '../../widgets/product_image.dart';
 import 'item_form_screen.dart';
 
 /// Gestion → Catalogue.
 class AdminCatalogScreen extends StatefulWidget {
-  const AdminCatalogScreen({super.key});
+  final String? shopId; // null = Super Admin (toutes les boutiques)
+  const AdminCatalogScreen({super.key, this.shopId});
 
   @override
   State<AdminCatalogScreen> createState() => _AdminCatalogScreenState();
@@ -18,8 +20,16 @@ class AdminCatalogScreen extends StatefulWidget {
 class _AdminCatalogScreenState extends State<AdminCatalogScreen> {
   late final Stream<List<CatalogItem>> _items = Db.catalogItems(onlyActive: false);
 
-  void _open([CatalogItem? item]) => Navigator.of(context)
-      .push(MaterialPageRoute(builder: (_) => ItemFormScreen(item: item)));
+  void _open([CatalogItem? item]) {
+    if (item != null && widget.shopId != null && item.shopId != widget.shopId) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Ce service est commun à toutes les boutiques : '
+              'seule l\'administration peut le modifier.')));
+      return;
+    }
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => ItemFormScreen(item: item, shopId: widget.shopId)));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -35,7 +45,10 @@ class _AdminCatalogScreenState extends State<AdminCatalogScreen> {
         builder: (context, snap) {
           if (snap.hasError) return Center(child: Text('Erreur : ${snap.error}'));
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-          final list = snap.data!;
+          final list = snap.data!
+              .where((i) => widget.shopId == null || i.availableIn(widget.shopId!))
+              .toList();
+          final session = sessionOf(context);
           if (list.isEmpty) {
             return const EmptyState(
               icon: Icons.grid_view_rounded,
@@ -71,6 +84,12 @@ class _AdminCatalogScreenState extends State<AdminCatalogScreen> {
                           const Pill('Indisponible', color: Color(0xFFC62828)),
                         if (item.popular)
                           const Pill('Populaire', color: AppConfig.green),
+                        if (session.shops.isNotEmpty)
+                          Pill(
+                              item.shopId == 'all' || item.shopId == 'main'
+                                  ? 'Toutes les boutiques'
+                                  : session.shopById(item.shopId).name,
+                              color: const Color(0xFF455A64)),
                         if (item.isTraining && item.places > 0)
                           Pill('${item.placesLeft}/${item.places} places',
                               color: const Color(0xFF6A1B9A)),
@@ -79,7 +98,9 @@ class _AdminCatalogScreenState extends State<AdminCatalogScreen> {
                   ),
                   trailing: Switch(
                     value: item.active,
-                    onChanged: (v) => Db.catalog.doc(item.id).update({'active': v}),
+                    onChanged: widget.shopId != null && item.shopId != widget.shopId
+                        ? null
+                        : (v) => Db.catalog.doc(item.id).update({'active': v}),
                   ),
                   onTap: () => _open(item),
                 ),

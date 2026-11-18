@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../models/shop.dart';
 import '../../models/shop_settings.dart';
 import '../../services/db.dart';
+import '../../services/notify_service.dart';
 
-/// Gestion → Réglages : téléphone, WhatsApp, adresse, horaires, livraison.
+/// Super Admin : paramètres généraux + fichiers (Cloudinary) + notifications.
+/// Responsable : réglages de sa boutique.
 class AdminSettingsScreen extends StatefulWidget {
-  const AdminSettingsScreen({super.key});
+  final String? shopId;
+  const AdminSettingsScreen({super.key, this.shopId});
 
   @override
   State<AdminSettingsScreen> createState() => _AdminSettingsScreenState();
@@ -19,28 +23,47 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
   final _address = TextEditingController();
   final _hours = TextEditingController();
   final _fee = TextEditingController();
+  final _cloud = TextEditingController();
+  final _preset = TextEditingController();
+  final _notify = TextEditingController();
   bool _loaded = false;
   bool _busy = false;
+
+  bool get _global => widget.shopId == null;
 
   @override
   void initState() {
     super.initState();
-    Db.settingsDoc.get().then((doc) {
-      final s = ShopSettings.fromDoc(doc);
-      _phone.text = s.phone;
-      _whatsapp.text = s.whatsapp;
-      _address.text = s.address;
-      _hours.text = s.hours;
-      _fee.text = s.deliveryFee.toString();
-      if (mounted) setState(() => _loaded = true);
-    }).catchError((_) {
-      if (mounted) setState(() => _loaded = true);
-    });
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      if (_global) {
+        final s = ShopSettings.fromDoc(await Db.settingsDoc.get());
+        _phone.text = s.phone;
+        _whatsapp.text = s.whatsapp;
+        _address.text = s.address;
+        _hours.text = s.hours;
+        _fee.text = s.deliveryFee.toString();
+        _cloud.text = s.cloudinaryCloud;
+        _preset.text = s.cloudinaryPreset;
+        _notify.text = s.notifyUrl;
+      } else {
+        final s = Shop.fromDoc(await Db.shops.doc(widget.shopId).get());
+        _phone.text = s.phone;
+        _whatsapp.text = s.whatsapp;
+        _address.text = s.address;
+        _hours.text = s.hours;
+        _fee.text = s.deliveryFee.toString();
+      }
+    } catch (_) {}
+    if (mounted) setState(() => _loaded = true);
   }
 
   @override
   void dispose() {
-    for (final c in [_phone, _whatsapp, _address, _hours, _fee]) {
+    for (final c in [_phone, _whatsapp, _address, _hours, _fee, _cloud, _preset, _notify]) {
       c.dispose();
     }
     super.dispose();
@@ -51,13 +74,27 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _busy = true);
     try {
-      await Db.saveSettings(ShopSettings(
-        phone: _phone.text.trim(),
-        whatsapp: _whatsapp.text.trim(),
-        address: _address.text.trim(),
-        hours: _hours.text.trim(),
-        deliveryFee: int.tryParse(_fee.text) ?? 0,
-      ));
+      if (_global) {
+        await Db.saveSettings(ShopSettings(
+          phone: _phone.text.trim(),
+          whatsapp: _whatsapp.text.trim(),
+          address: _address.text.trim(),
+          hours: _hours.text.trim(),
+          deliveryFee: int.tryParse(_fee.text) ?? 0,
+          cloudinaryCloud: _cloud.text.trim(),
+          cloudinaryPreset: _preset.text.trim(),
+          notifyUrl: _notify.text.trim(),
+        ));
+        NotifyService.resetCache();
+      } else {
+        await Db.shops.doc(widget.shopId).update({
+          'phone': _phone.text.trim(),
+          'whatsapp': _whatsapp.text.trim(),
+          'address': _address.text.trim(),
+          'hours': _hours.text.trim(),
+          'deliveryFee': int.tryParse(_fee.text) ?? 0,
+        });
+      }
       messenger.showSnackBar(const SnackBar(content: Text('Réglages enregistrés')));
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('Erreur : $e')));
@@ -66,10 +103,17 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
     }
   }
 
+  Widget _title(String t) => Padding(
+        padding: const EdgeInsets.fromLTRB(0, 20, 0, 8),
+        child: Text(t,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+      );
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Réglages de la boutique')),
+      appBar: AppBar(
+          title: Text(_global ? 'Paramètres' : 'Réglages de la boutique')),
       body: !_loaded
           ? const Center(child: CircularProgressIndicator())
           : Form(
@@ -77,19 +121,21 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  _title(_global
+                      ? 'Coordonnées par défaut (avant la création des boutiques)'
+                      : 'Coordonnées de la boutique'),
                   TextFormField(
                     controller: _phone,
                     keyboardType: TextInputType.phone,
                     decoration: const InputDecoration(
-                        labelText: 'Téléphone de la boutique',
-                        prefixIcon: Icon(Icons.call)),
+                        labelText: 'Téléphone', prefixIcon: Icon(Icons.call)),
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: _whatsapp,
                     keyboardType: TextInputType.phone,
                     decoration: const InputDecoration(
-                        labelText: 'Numéro WhatsApp', prefixIcon: Icon(Icons.chat)),
+                        labelText: 'WhatsApp', prefixIcon: Icon(Icons.chat)),
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
@@ -117,7 +163,35 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                         suffixText: 'FCFA',
                         prefixIcon: Icon(Icons.delivery_dining)),
                   ),
-                  const SizedBox(height: 20),
+                  if (_global) ...[
+                    _title('Envoi de fichiers (Cloudinary)'),
+                    TextFormField(
+                      controller: _cloud,
+                      decoration: const InputDecoration(
+                          labelText: 'Cloud name', hintText: 'ex : dxyz123ab'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _preset,
+                      decoration: const InputDecoration(
+                          labelText: 'Upload preset (non signé)',
+                          hintText: 'ex : aicha_unsigned'),
+                    ),
+                    _title('Notifications (serveur Cloudflare)'),
+                    TextFormField(
+                      controller: _notify,
+                      keyboardType: TextInputType.url,
+                      decoration: const InputDecoration(
+                          labelText: 'Adresse du serveur',
+                          hintText: 'https://aicha-notify.xxx.workers.dev'),
+                      validator: (v) {
+                        final t = (v ?? '').trim();
+                        if (t.isEmpty || t.startsWith('https://')) return null;
+                        return 'Doit commencer par https://';
+                      },
+                    ),
+                  ],
+                  const SizedBox(height: 24),
                   FilledButton(
                     onPressed: _busy ? null : _save,
                     child: const Text('Enregistrer'),

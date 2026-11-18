@@ -6,9 +6,11 @@ import '../../config.dart';
 import '../../models/app_user.dart';
 import '../../models/order.dart';
 import '../../services/db.dart';
+import '../../services/session.dart';
 import '../../utils.dart';
 import '../../widgets/common.dart';
 import '../../widgets/order_card.dart';
+import '../../services/notify_service.dart';
 import '../chat_screen.dart';
 
 const _adminFilters = {
@@ -43,17 +45,19 @@ bool _match(ShopOrder o, String f) {
 class AdminOrdersScreen extends StatefulWidget {
   final AppUser me;
   final String initialFilter;
+  final String? shopId; // null = toutes les boutiques (Super Admin)
   const AdminOrdersScreen(
-      {super.key, required this.me, this.initialFilter = 'a_traiter'});
+      {super.key, required this.me, this.initialFilter = 'a_traiter', this.shopId});
 
   @override
   State<AdminOrdersScreen> createState() => _AdminOrdersScreenState();
 }
 
 class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
-  late final Stream<List<ShopOrder>> _orders = Db.allOrders();
+  late final Stream<List<ShopOrder>> _orders = Db.allOrders(shopId: widget.shopId);
   late String _filter = widget.initialFilter;
   String _query = '';
+  String _shop = ''; // filtre boutique (Super Admin)
 
   @override
   Widget build(BuildContext context) {
@@ -71,6 +75,33 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
             onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
           ),
         ),
+        if (widget.shopId == null && sessionOf(context).shops.isNotEmpty)
+          SizedBox(
+            height: 48,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: FilterChip(
+                    label: const Text('Toutes les boutiques'),
+                    selected: _shop.isEmpty,
+                    onSelected: (_) => setState(() => _shop = ''),
+                  ),
+                ),
+                for (final sh in sessionOf(context).shops)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: FilterChip(
+                      label: Text(sh.name),
+                      selected: _shop == sh.id,
+                      onSelected: (_) => setState(() => _shop = sh.id),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         SizedBox(
           height: 52,
           child: ListView(
@@ -100,6 +131,7 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
                 return const Center(child: CircularProgressIndicator());
               }
               final list = snap.data!.where((o) {
+                if (_shop.isNotEmpty && o.shopId != _shop) return false;
                 if (!_match(o, _filter)) return false;
                 if (_query.isEmpty) return true;
                 return o.displayNumber.toLowerCase().contains(_query) ||
@@ -140,7 +172,8 @@ class AdminOrderDetailScreen extends StatelessWidget {
   Future<void> _setStatus(BuildContext context, ShopOrder o, String s) async {
     try {
       await Db.setOrderStatus(o, s,
-          senderId: me.uid, senderName: AppConfig.shopName);
+          senderId: me.uid,
+          senderName: sessionOf(context, listen: false).teamName(o.shopId));
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context)
@@ -198,14 +231,24 @@ class AdminOrderDetailScreen extends StatelessWidget {
     );
     if (ok != true) return;
     final value = int.parse(amount.text);
+    if (!context.mounted) return;
+    final team = sessionOf(context, listen: false).teamName(o.shopId);
     await Db.setQuote(o.id, value, note.text.trim());
+    NotifyService.toUser(
+      uid: o.buyerId,
+      kind: 'orders',
+      title: team,
+      body: 'Votre devis #${o.displayNumber} est prêt : ${fcfa(value)}',
+      data: {'type': 'order', 'orderId': o.id},
+    );
     await Db.sendMessage(
       conversationId: Db.orderConversationId(o.id),
       createIfMissing: Db.orderConversationData(o),
       senderId: me.uid,
       senderRole: 'shop',
-      senderName: AppConfig.shopName,
+      senderName: team,
       type: 'system',
+      notify: false,
       text: 'Commande ${o.displayNumber} : prix final ${fcfa(value)}'
           '${note.text.trim().isEmpty ? '' : ' — ${note.text.trim()}'}',
     );
@@ -221,6 +264,8 @@ class AdminOrderDetailScreen extends StatelessWidget {
         asShop: true,
         me: me,
         clientPhone: o.phone,
+        shopId: o.shopId,
+        orderId: o.id,
       ),
     ));
   }
@@ -231,6 +276,7 @@ class AdminOrderDetailScreen extends StatelessWidget {
       stream: Db.orderStream(orderId),
       builder: (context, snap) {
         final o = snap.data;
+        final session = sessionOf(context);
         return Scaffold(
           appBar: AppBar(
               title: Text(o == null ? 'Commande' : '#${o.displayNumber}')),
@@ -254,6 +300,8 @@ class AdminOrderDetailScreen extends StatelessWidget {
                               Pill(orderStatusLabels[o.status] ?? o.status,
                                   color: statusColor(o.status)),
                             ]),
+                            if (session.shops.isNotEmpty)
+                              Text('🏪 ${session.shopById(o.shopId).name}'),
                             Text('📞 ${o.phone}'),
                             Text(o.isDelivery
                                 ? '📍 Livraison : ${o.address}, ${o.city}'
@@ -288,7 +336,7 @@ class AdminOrderDetailScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    if (!o.isClosed)
+                    if (!o.isClosed && session.can('status'))
                       Card(
                         child: Padding(
                           padding: const EdgeInsets.all(16),
@@ -359,6 +407,7 @@ class AdminOrderDetailScreen extends StatelessWidget {
                             ),
                             if (o.adminNote.isNotEmpty) Text('💬 ${o.adminNote}'),
                             if (!o.isClosed &&
+                                session.can('quotes') &&
                                 (o.quoteNeeded || o.quotedTotal != null)) ...[
                               const SizedBox(height: 10),
                               FilledButton.icon(

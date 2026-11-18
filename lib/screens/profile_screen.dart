@@ -1,24 +1,25 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../config.dart';
 import '../models/app_user.dart';
-import '../models/shop_settings.dart';
+import '../models/staff.dart';
 import '../services/auth_service.dart';
 import '../services/db.dart';
+import '../services/notify_service.dart';
+import '../services/session.dart';
 import '../utils.dart';
+import 'my_files_screen.dart';
 import 'orders_screen.dart';
+import 'shop_picker_screen.dart';
 
 /// Profil : mes infos, raccourcis, notifications, contact, à propos.
 class ProfileScreen extends StatelessWidget {
-  final AppUser? user;
-  final bool isAdmin;
   final void Function(int tab) onGoTo;
-  const ProfileScreen(
-      {super.key, required this.user, required this.isAdmin, required this.onGoTo});
+  const ProfileScreen({super.key, required this.onGoTo});
 
-  Future<void> _editName(BuildContext context) async {
-    final u = user;
+  Future<void> _editName(BuildContext context, AppUser? u) async {
     if (u == null) return;
     final ctrl = TextEditingController(text: u.name);
     final name = await showDialog<String>(
@@ -64,9 +65,24 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
+  Future<void> _signOut(BuildContext context, String uid) async {
+    final notifier = context.read<SessionNotifier>();
+    await PushService.signOut(uid);
+    notifier.clear();
+    await AuthService.signOut();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final u = user;
+    final session = sessionOf(context);
+    final u = session.user;
+    final isAdmin = session.canManage;
+    final roleLabel = session.isSuper
+        ? 'Super Admin'
+        : session.isStaff
+            ? '${staffRoleLabels[session.staff!.role] ?? ''} • ${session.shopById(session.staff!.shopId).name}'
+            : null;
+    final shop = session.myShop;
     return Scaffold(
       appBar: AppBar(title: const Text('Mon profil'), automaticallyImplyLeading: false),
       body: ListView(
@@ -97,9 +113,9 @@ class ProfileScreen extends StatelessWidget {
                               fontSize: 18, fontWeight: FontWeight.w800)),
                       Text(u?.phone ?? '',
                           style: const TextStyle(color: Colors.black54)),
-                      if (isAdmin)
-                        const Text('Super Admin',
-                            style: TextStyle(
+                      if (roleLabel != null)
+                        Text(roleLabel,
+                            style: const TextStyle(
                                 color: AppConfig.green,
                                 fontWeight: FontWeight.w700)),
                     ],
@@ -107,7 +123,7 @@ class ProfileScreen extends StatelessWidget {
                 ),
                 IconButton(
                   tooltip: 'Modifier mon nom',
-                  onPressed: () => _editName(context),
+                  onPressed: () => _editName(context, u),
                   icon: const Icon(Icons.edit_outlined),
                 ),
               ]),
@@ -123,8 +139,17 @@ class ProfileScreen extends StatelessWidget {
                     uid: u.uid, user: u, initialFilter: 'devis', standalone: true),
               ));
             }),
-            _tile(Icons.folder_rounded, 'Mes fichiers', () => _files(context)),
+            _tile(Icons.folder_rounded, 'Mes fichiers', () {
+              Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => MyFilesScreen(uid: session.uid)));
+            }),
             _tile(Icons.chat_bubble_rounded, 'Mes discussions', () => onGoTo(2)),
+            if (session.shops.isNotEmpty)
+              _tile(
+                  Icons.storefront_rounded,
+                  'Ma boutique : ${session.clientShopId.isEmpty ? 'à choisir' : shop.name}',
+                  () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => const ShopPickerScreen()))),
             _tile(Icons.notifications_rounded, 'Notifications', () {
               if (u == null) return;
               Navigator.of(context).push(MaterialPageRoute(
@@ -132,10 +157,9 @@ class ProfileScreen extends StatelessWidget {
             }),
           ]),
           const SizedBox(height: 16),
-          StreamBuilder<ShopSettings>(
-            stream: Db.settings(),
-            builder: (context, snap) {
-              final s = snap.data ?? const ShopSettings();
+          Builder(
+            builder: (context) {
+              final s = shop;
               return _group([
                 const Padding(
                   padding: EdgeInsets.fromLTRB(16, 14, 16, 4),
@@ -168,7 +192,7 @@ class ProfileScreen extends StatelessWidget {
               leading: const Icon(Icons.logout_rounded, color: Color(0xFFC62828)),
               title: const Text('Se déconnecter',
                   style: TextStyle(color: Color(0xFFC62828))),
-              onTap: () => AuthService.signOut(),
+              onTap: () => _signOut(context, session.uid),
             ),
           ]),
           const SizedBox(height: 24),
@@ -177,28 +201,6 @@ class ProfileScreen extends StatelessWidget {
                 style: TextStyle(color: Colors.black45, fontStyle: FontStyle.italic)),
           ),
         ],
-      ),
-    );
-  }
-
-  void _files(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (_) => const Padding(
-        padding: EdgeInsets.fromLTRB(24, 0, 24, 32),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.folder_open_rounded, size: 48, color: AppConfig.green),
-          SizedBox(height: 8),
-          Text('Mes fichiers',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-          SizedBox(height: 8),
-          Text(
-            'L\'envoi de fichiers directement dans l\'application arrive très bientôt. '
-            'En attendant, envoyez vos fichiers depuis la discussion de votre commande (bouton trombone → WhatsApp).',
-            textAlign: TextAlign.center,
-          ),
-        ]),
       ),
     );
   }

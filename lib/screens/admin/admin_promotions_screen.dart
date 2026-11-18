@@ -9,13 +9,16 @@ import '../../config.dart';
 import '../../models/catalog_item.dart';
 import '../../models/promotion.dart';
 import '../../services/db.dart';
+import '../../services/notify_service.dart';
+import '../../services/session.dart';
 import '../../utils.dart';
 import '../../widgets/common.dart';
 import '../../widgets/product_image.dart';
 
 /// Gestion → Offres et nouveautés (affichées dans « Nos offres »).
 class AdminPromotionsScreen extends StatefulWidget {
-  const AdminPromotionsScreen({super.key});
+  final String? shopId; // null = Super Admin
+  const AdminPromotionsScreen({super.key, this.shopId});
 
   @override
   State<AdminPromotionsScreen> createState() => _AdminPromotionsScreenState();
@@ -24,8 +27,19 @@ class AdminPromotionsScreen extends StatefulWidget {
 class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
   late final Stream<List<Promotion>> _promos = Db.allPromotions();
 
-  void _open([Promotion? p]) => Navigator.of(context)
-      .push(MaterialPageRoute(builder: (_) => PromotionFormScreen(promo: p)));
+  bool _mine(Promotion p) =>
+      widget.shopId == null ||
+      (p.shops.length == 1 && p.shops.first == widget.shopId);
+
+  void _open([Promotion? p]) {
+    if (p != null && !_mine(p)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Offre publiée par l\'administration : non modifiable.')));
+      return;
+    }
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => PromotionFormScreen(promo: p, shopId: widget.shopId)));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -41,7 +55,10 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
         builder: (context, snap) {
           if (snap.hasError) return Center(child: Text('Erreur : ${snap.error}'));
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-          final list = snap.data!;
+          final list = snap.data!
+              .where((p) => widget.shopId == null || p.visibleIn(widget.shopId!))
+              .toList();
+          final session = sessionOf(context);
           if (list.isEmpty) {
             return const EmptyState(
               icon: Icons.local_offer_outlined,
@@ -75,14 +92,26 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
                         style: const TextStyle(fontSize: 12),
                       ),
                       const SizedBox(height: 4),
-                      p.isLive
-                          ? const Pill('En ligne', color: AppConfig.green)
-                          : const Pill('Hors ligne', color: Colors.grey),
+                      Wrap(spacing: 6, runSpacing: 4, children: [
+                        p.isLive
+                            ? const Pill('En ligne', color: AppConfig.green)
+                            : const Pill('Hors ligne', color: Colors.grey),
+                        if (session.shops.isNotEmpty)
+                          Pill(
+                              p.shops.contains('all')
+                                  ? 'Toutes les boutiques'
+                                  : p.shops
+                                      .map((id) => session.shopById(id).name)
+                                      .join(', '),
+                              color: const Color(0xFF455A64)),
+                      ]),
                     ],
                   ),
                   trailing: Switch(
                     value: p.active,
-                    onChanged: (v) => Db.promotions.doc(p.id).update({'active': v}),
+                    onChanged: _mine(p)
+                        ? (v) => Db.promotions.doc(p.id).update({'active': v})
+                        : null,
                   ),
                   onTap: () => _open(p),
                 ),
@@ -97,7 +126,8 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
 
 class PromotionFormScreen extends StatefulWidget {
   final Promotion? promo;
-  const PromotionFormScreen({super.key, this.promo});
+  final String? shopId; // boutique de l'équipe (null = Super Admin)
+  const PromotionFormScreen({super.key, this.promo, this.shopId});
 
   @override
   State<PromotionFormScreen> createState() => _PromotionFormScreenState();
@@ -117,6 +147,10 @@ class _PromotionFormScreenState extends State<PromotionFormScreen> {
   String? _imageData;
   bool _busy = false;
   List<CatalogItem> _items = const [];
+  late Set<String> _targets = widget.shopId != null
+      ? {widget.shopId!}
+      : (widget.promo?.shops ?? const ['all']).toSet();
+  late bool _notify = widget.promo == null;
 
   @override
   void initState() {
@@ -171,7 +205,11 @@ class _PromotionFormScreenState extends State<PromotionFormScreen> {
         'itemId': _itemId,
         'start': _start == null ? null : Timestamp.fromDate(_start!),
         'end': _end == null ? null : Timestamp.fromDate(_end!),
-        'shops': ['all'],
+        'shops': widget.shopId != null
+            ? [widget.shopId!]
+            : (_targets.isEmpty || _targets.contains('all')
+                ? ['all']
+                : _targets.toList()),
       };
       if (widget.promo == null) {
         await Db.promotions.add({
@@ -181,6 +219,21 @@ class _PromotionFormScreenState extends State<PromotionFormScreen> {
         });
       } else {
         await Db.promotions.doc(widget.promo!.id).update(data);
+      }
+      if (_notify) {
+        final shops = (data['shops'] as List).map((e) => e.toString()).toList();
+        await NotifyService.toShops(
+          shops: shops,
+          title: 'AÏCHA SERVICES — ${promoKinds[_kind] ?? 'Nouveauté'}',
+          body: _title.text.trim(),
+          data: {'type': 'promo', 'itemId': _itemId},
+        );
+        await Db.logNotification({
+          'title': _title.text.trim(),
+          'body': _desc.text.trim(),
+          'shops': shops,
+          'kind': _kind,
+        });
       }
       navigator.pop();
       messenger.showSnackBar(const SnackBar(content: Text('Offre enregistrée')));
@@ -302,6 +355,36 @@ class _PromotionFormScreenState extends State<PromotionFormScreen> {
                 ),
               ),
             ]),
+            if (widget.shopId == null && sessionOf(context).shops.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              const Text('Boutiques concernées',
+                  style: TextStyle(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 6),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                FilterChip(
+                  label: const Text('Toutes les boutiques'),
+                  selected: _targets.contains('all'),
+                  onSelected: (_) => setState(() => _targets = {'all'}),
+                ),
+                for (final sh in sessionOf(context).shops)
+                  FilterChip(
+                    label: Text(sh.name),
+                    selected: _targets.contains(sh.id),
+                    onSelected: (v) => setState(() {
+                      _targets.remove('all');
+                      v ? _targets.add(sh.id) : _targets.remove(sh.id);
+                      if (_targets.isEmpty) _targets = {'all'};
+                    }),
+                  ),
+              ]),
+            ],
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Envoyer une notification aux clients'),
+              subtitle: const Text('Les clients concernés seront prévenus'),
+              value: _notify,
+              onChanged: (v) => setState(() => _notify = v),
+            ),
             if (_start != null || _end != null)
               TextButton(
                 onPressed: () => setState(() {

@@ -45,6 +45,10 @@ class CatalogItem {
   });
 
   bool get onQuote => price <= 0;
+
+  /// 'all' et 'main' = toutes les boutiques.
+  bool availableIn(String shop) =>
+      shopId == 'all' || shopId == 'main' || shopId == shop;
   bool get isTraining => type == 'formation';
   bool get acceptsFile =>
       type == 'impression' || type == 'personnalisation' || requiresFile;

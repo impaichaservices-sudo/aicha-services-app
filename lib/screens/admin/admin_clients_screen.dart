@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../config.dart';
 import '../../models/app_user.dart';
 import '../../services/db.dart';
+import '../../services/session.dart';
 import '../../utils.dart';
 import '../../widgets/common.dart';
 import '../chat_screen.dart';
@@ -11,14 +12,17 @@ import '../chat_screen.dart';
 /// Gestion → Clients : liste, appel, WhatsApp, discussion.
 class AdminClientsScreen extends StatefulWidget {
   final AppUser me;
-  const AdminClientsScreen({super.key, required this.me});
+  final String? shopId;
+  const AdminClientsScreen({super.key, required this.me, this.shopId});
 
   @override
   State<AdminClientsScreen> createState() => _AdminClientsScreenState();
 }
 
 class _AdminClientsScreenState extends State<AdminClientsScreen> {
-  late final Stream<List<AppUser>> _users = Db.allUsers();
+  late final Stream<List<AppUser>> _users = widget.shopId == null
+      ? Db.allUsers()
+      : Db.shopUsers(widget.shopId!);
   String _q = '';
 
   @override
@@ -70,14 +74,17 @@ class _AdminClientsScreenState extends State<AdminClientsScreen> {
                       title: Text(u.name.isEmpty ? 'Sans nom' : u.name,
                           style: const TextStyle(fontWeight: FontWeight.w700)),
                       subtitle: Text(
-                          '${u.phone}${u.createdAt == null ? '' : ' • inscrit le ${shortDate(u.createdAt).split(' ').first}'}'),
+                          '${u.phone}${u.createdAt == null ? '' : ' • inscrit le ${shortDate(u.createdAt).split(' ').first}'}'
+                          '${widget.shopId == null && sessionOf(context).shops.isNotEmpty ? '\n${sessionOf(context).shopById(u.shopId).name}' : ''}'),
                       trailing: PopupMenuButton<String>(
                         onSelected: (a) {
                           if (a == 'chat') {
                             Navigator.of(context).push(MaterialPageRoute(
                               builder: (_) => ChatScreen(
                                 conversationId: Db.generalConversationId(u.uid),
-                                createIfMissing: Db.generalConversationData(u),
+                                createIfMissing: Db.generalConversationData(u,
+                                    shopId: widget.shopId ?? u.shopId),
+                                shopId: widget.shopId ?? u.shopId,
                                 title: u.name,
                                 subtitle: u.phone,
                                 asShop: true,

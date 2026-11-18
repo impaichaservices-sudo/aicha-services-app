@@ -4,6 +4,7 @@ import '../config.dart';
 import '../models/app_user.dart';
 import '../models/chat.dart';
 import '../services/db.dart';
+import '../services/session.dart';
 import '../utils.dart';
 import '../widgets/common.dart';
 import 'chat_screen.dart';
@@ -29,27 +30,37 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       widget.user ??
       AppUser(uid: widget.uid, name: 'Client', phone: '', email: '');
 
+  String get _shopId {
+    final id = sessionOf(context, listen: false).clientShopId;
+    return id.isEmpty ? 'main' : id;
+  }
+
   void _open(Conversation c) {
+    final team = sessionOf(context, listen: false).teamName(c.shopId);
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => ChatScreen(
         conversationId: c.id,
         createIfMissing: const {},
-        title: c.isOrder ? 'Commande #${c.orderNumber}' : c.title,
-        subtitle: c.isOrder ? 'Équipe ${AppConfig.shopName}' : null,
+        title: c.isOrder ? 'Commande #${c.orderNumber}' : 'Équipe $team',
+        subtitle: c.isOrder ? 'Équipe $team' : null,
         asShop: false,
         me: _me,
+        shopId: c.shopId,
+        orderId: c.orderId,
       ),
     ));
   }
 
   void _openGeneral() {
+    final team = sessionOf(context, listen: false).teamName(_shopId);
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => ChatScreen(
         conversationId: Db.generalConversationId(widget.uid),
-        createIfMissing: Db.generalConversationData(_me),
-        title: 'Équipe ${AppConfig.shopName}',
+        createIfMissing: Db.generalConversationData(_me, shopId: _shopId),
+        title: 'Équipe $team',
         asShop: false,
         me: _me,
+        shopId: _shopId,
       ),
     ));
   }
@@ -84,7 +95,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
                     child: ClipOval(
                         child: Image.asset(AppConfig.logo, width: 46, height: 46)),
                   ),
-                  title: Text('Équipe ${AppConfig.shopName}',
+                  title: Text('Équipe ${sessionOf(context).teamName(_shopId)}',
                       style: const TextStyle(fontWeight: FontWeight.w800)),
                   subtitle: Text(
                     general?.lastMessage.isNotEmpty == true

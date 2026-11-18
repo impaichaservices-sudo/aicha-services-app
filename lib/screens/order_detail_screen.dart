@@ -29,6 +29,8 @@ class OrderDetailScreen extends StatelessWidget {
         subtitle: o.itemsSummary,
         asShop: false,
         me: me,
+        shopId: o.shopId,
+        orderId: o.id,
       ),
     ));
   }

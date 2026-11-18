@@ -5,6 +5,7 @@ import '../config.dart';
 import '../models/catalog_item.dart';
 import '../services/auth_service.dart';
 import '../services/db.dart';
+import '../services/session.dart';
 import '../state/cart.dart';
 import '../widgets/common.dart';
 import '../widgets/product_image.dart';
@@ -46,15 +47,18 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
   Future<void> _ask() async {
     final uid = AuthService.current?.uid;
     if (uid == null) return;
+    final s = sessionOf(context, listen: false);
+    final shopId = s.clientShopId.isEmpty ? 'main' : s.clientShopId;
     final user = await Db.userStream(uid).first;
     if (user == null || !mounted) return;
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => ChatScreen(
         conversationId: Db.generalConversationId(uid),
-        createIfMissing: Db.generalConversationData(user),
-        title: 'Équipe ${AppConfig.shopName}',
+        createIfMissing: Db.generalConversationData(user, shopId: shopId),
+        title: 'Équipe ${s.teamName(shopId)}',
         asShop: false,
         me: user,
+        shopId: shopId,
         initialText: 'Bonjour, je voudrais des informations sur : ${item.name}',
       ),
     ));

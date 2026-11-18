@@ -2,13 +2,31 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ---------- Qui est qui ----------
     function signedIn() { return request.auth != null; }
     function me() { return request.auth.uid; }
-    function isAdmin() {
+    function isSuper() {
       return signedIn() && (
         me() in ['JJj2RolSbmVlWc3n4qT6NvAhxZ63']
         || exists(/databases/$(database)/documents/admins/$(me())));
     }
+    function staffPath() { return /databases/$(database)/documents/staff/$(me()); }
+    function isStaff() {
+      return signedIn() && exists(staffPath())
+        && get(staffPath()).data.get('active', true) == true;
+    }
+    function staffShop() { return get(staffPath()).data.shopId; }
+    function isStaffOf(shopId) { return isStaff() && staffShop() == shopId; }
+    function isManagerOf(shopId) {
+      return isStaffOf(shopId) && get(staffPath()).data.role == 'manager';
+    }
+    // Permission d'un agent (un responsable a tout).
+    function canIn(shopId, perm) {
+      return isStaffOf(shopId) && (
+        get(staffPath()).data.role == 'manager'
+        || get(staffPath()).data.get('perms', {}).get(perm, false) == true);
+    }
+    function manages(shopId) { return isSuper() || isStaffOf(shopId); }
     function onlyChanges(keys) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
@@ -16,41 +34,83 @@ service cloud.firestore {
       return /databases/$(database)/documents/conversations/$(cid);
     }
 
+    // ---------- Comptes ----------
     match /admins/{uid} {
       allow read: if signedIn() && me() == uid;
       allow write: if false;
     }
 
-    // Profils : chacun le sien ; l'admin voit tout le monde.
+    // Profils : chacun le sien ; l'équipe peut consulter les clients.
     match /users/{uid} {
-      allow read: if signedIn() && (me() == uid || isAdmin());
+      allow read: if signedIn() && (me() == uid || isSuper() || isStaff());
       allow create, update: if signedIn() && me() == uid;
+    }
+
+    // Équipe : le Super Admin nomme tout le monde ; un responsable gère
+    // uniquement les agents de sa boutique.
+    match /staff/{uid} {
+      allow read: if signedIn() && (
+        me() == uid || isSuper() || isManagerOf(resource.data.shopId));
+      allow create, update: if isSuper() || (
+        isManagerOf(request.resource.data.shopId)
+        && request.resource.data.role == 'agent'
+        && uid != me()
+        && (resource == null || resource.data.shopId == staffShop()));
+      allow delete: if isSuper() || (
+        isManagerOf(resource.data.shopId) && resource.data.role == 'agent');
+    }
+
+    // ---------- Boutiques et paramètres ----------
+    match /shops/{shopId} {
+      allow read: if true;
+      allow create, delete: if isSuper();
+      allow update: if isSuper() || (
+        isManagerOf(shopId)
+        && onlyChanges(['phone', 'whatsapp', 'address', 'hours', 'deliveryFee']));
     }
 
     match /settings/{doc} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if isSuper();
     }
 
-    // Offres et nouveautés : visibles par tous, publiées par l'admin.
-    match /promotions/{id} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-
+    // ---------- Catalogue et offres ----------
     match /catalog/{id} {
       allow read: if true;
-      allow write: if isAdmin();
-      // Un client peut seulement réserver des places de formation.
-      allow update: if signedIn()
-        && onlyChanges(['booked'])
-        && request.resource.data.booked is int
-        && request.resource.data.booked > resource.data.get('booked', 0)
-        && (resource.data.get('places', 0) == 0
-            || request.resource.data.booked <= resource.data.places);
+      allow create: if isSuper() || canIn(request.resource.data.shopId, 'catalog');
+      allow update: if isSuper()
+        || (canIn(resource.data.get('shopId', 'main'), 'catalog')
+            && request.resource.data.shopId == resource.data.get('shopId', 'main'))
+        // Un client peut seulement réserver des places de formation.
+        || (signedIn()
+            && onlyChanges(['booked'])
+            && request.resource.data.booked is int
+            && request.resource.data.booked > resource.data.get('booked', 0)
+            && (resource.data.get('places', 0) == 0
+                || request.resource.data.booked <= resource.data.places));
+      allow delete: if isSuper() || canIn(resource.data.get('shopId', 'main'), 'catalog');
     }
 
-    // Compteur des numéros de commande AS-00001… (augmente de 1 à la fois).
+    match /promotions/{id} {
+      allow read: if true;
+      allow create: if isSuper() || (
+        request.resource.data.shops.size() == 1
+        && canIn(request.resource.data.shops[0], 'promos'));
+      allow update, delete: if isSuper() || (
+        resource.data.shops.size() == 1
+        && canIn(resource.data.shops[0], 'promos')
+        && (request.resource == null
+            || request.resource.data.shops == resource.data.shops));
+    }
+
+    match /notifications/{id} {
+      allow read: if isSuper() || isStaff();
+      allow create: if isSuper() || isStaff();
+      allow update, delete: if isSuper();
+    }
+
+    // ---------- Commandes ----------
+    // Compteurs des numéros AS-00001 / AS-DJD-00001 (augmentent de 1).
     match /counters/{id} {
       allow read: if signedIn();
       allow create: if signedIn() && request.resource.data.next == 1;
@@ -58,10 +118,14 @@ service cloud.firestore {
     }
 
     match /orders/{id} {
-      allow read: if signedIn() && (resource.data.buyerId == me() || isAdmin());
+      allow get: if signedIn() && (
+        resource.data.buyerId == me() || manages(resource.data.get('shopId', 'main')));
+      allow list: if signedIn() && (
+        resource.data.buyerId == me() || manages(resource.data.shopId));
 
       allow create: if signedIn()
         && request.resource.data.buyerId == me()
+        && request.resource.data.shopId is string
         && request.resource.data.status == 'nouvelle'
         && request.resource.data.paymentStatus == 'en_attente'
         && request.resource.data.total is int
@@ -69,11 +133,14 @@ service cloud.firestore {
         && !('quotedTotal' in request.resource.data);
 
       allow update: if signedIn() && (
-        (isAdmin()
+        // Super Admin ou équipe autorisée : statut, prix final, message
+        ((isSuper() || canIn(resource.data.get('shopId', 'main'), 'status')
+                    || canIn(resource.data.get('shopId', 'main'), 'quotes'))
           && onlyChanges(['status', 'quotedTotal', 'adminNote', 'updatedAt'])
           && request.resource.data.status in
                ['nouvelle', 'confirmee', 'en_cours', 'prete', 'livree', 'annulee'])
         ||
+        // Le client peut annuler une commande pas encore traitée
         (resource.data.buyerId == me()
           && resource.data.status == 'nouvelle'
           && onlyChanges(['status', 'updatedAt'])
@@ -81,31 +148,46 @@ service cloud.firestore {
       );
     }
 
-    // Discussions : le client ne voit que les siennes ; l'admin voit tout.
+    // ---------- Discussions ----------
     match /conversations/{cid} {
-      allow get: if signedIn()
-        && (resource == null || isAdmin() || resource.data.clientId == me());
-      allow list: if signedIn() && (isAdmin() || resource.data.clientId == me());
-      allow create: if signedIn()
-        && (isAdmin() || request.resource.data.clientId == me());
+      allow get: if signedIn() && (
+        resource == null || resource.data.clientId == me()
+        || manages(resource.data.get('shopId', 'main')));
+      allow list: if signedIn() && (
+        resource.data.clientId == me() || manages(resource.data.shopId));
+      allow create: if signedIn() && (
+        request.resource.data.clientId == me()
+        || manages(request.resource.data.shopId));
       allow update: if signedIn() && (
-        isAdmin()
+        manages(resource.data.get('shopId', 'main'))
         || (resource.data.clientId == me()
-            && onlyChanges(['lastMessage', 'lastAt', 'unreadForShop', 'unreadForClient'])));
-      allow delete: if isAdmin();
+            && onlyChanges(['lastMessage', 'lastAt', 'unreadForShop',
+                            'unreadForClient', 'shopId'])));
+      allow delete: if isSuper();
 
       match /messages/{mid} {
         allow read: if signedIn() && (
-          isAdmin()
-          || !exists(conv(cid))
-          || get(conv(cid)).data.clientId == me());
+          !exists(conv(cid))
+          || get(conv(cid)).data.clientId == me()
+          || manages(get(conv(cid)).data.get('shopId', 'main')));
         allow create: if signedIn() && (
-          (isAdmin() && request.resource.data.senderRole == 'shop')
+          (manages(getAfter(conv(cid)).data.get('shopId', 'main'))
+            && request.resource.data.senderRole == 'shop')
           || (getAfter(conv(cid)).data.clientId == me()
               && request.resource.data.senderId == me()
               && request.resource.data.senderRole == 'client'));
         allow update, delete: if false;
       }
+    }
+
+    // ---------- Fichiers ----------
+    match /files/{id} {
+      allow read: if signedIn() && (
+        resource.data.ownerId == me() || manages(resource.data.get('shopId', 'main')));
+      allow create: if signedIn() && request.resource.data.ownerId == me();
+      allow update: if false;
+      allow delete: if signedIn() && (
+        resource.data.ownerId == me() || isSuper());
     }
 
     match /payments/{id} {

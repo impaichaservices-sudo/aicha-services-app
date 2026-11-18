@@ -4,9 +4,13 @@ import '../config.dart';
 import '../models/app_user.dart';
 import '../models/catalog_item.dart';
 import '../models/chat.dart';
+import '../models/file_record.dart';
 import '../models/order.dart';
 import '../models/promotion.dart';
+import '../models/shop.dart';
 import '../models/shop_settings.dart';
+import '../models/staff.dart';
+import 'notify_service.dart';
 
 /// Accès à la base Firestore.
 /// Les tris se font dans l'application pour éviter de créer des index composites.
@@ -27,8 +31,16 @@ class Db {
       _fs.collection('conversations');
   static DocumentReference<Map<String, dynamic>> get settingsDoc =>
       _fs.collection('settings').doc('shop');
-  static DocumentReference<Map<String, dynamic>> get orderCounter =>
-      _fs.collection('counters').doc('orders');
+  static CollectionReference<Map<String, dynamic>> get shops =>
+      _fs.collection('shops');
+  static CollectionReference<Map<String, dynamic>> get staff =>
+      _fs.collection('staff');
+  static CollectionReference<Map<String, dynamic>> get files =>
+      _fs.collection('files');
+  static CollectionReference<Map<String, dynamic>> get notifications =>
+      _fs.collection('notifications');
+  static DocumentReference<Map<String, dynamic>> counterFor(String shopId) =>
+      _fs.collection('counters').doc(shopId == 'main' ? 'orders' : shopId);
 
   static int _newestFirst(DateTime? a, DateTime? b) =>
       (b ?? DateTime(2100)).compareTo(a ?? DateTime(2100));
@@ -42,6 +54,18 @@ class Db {
   static Stream<List<AppUser>> allUsers() => users.snapshots().map((s) =>
       s.docs.map(AppUser.fromDoc).toList()
         ..sort((a, b) => _newestFirst(a.createdAt, b.createdAt)));
+
+  static Stream<List<AppUser>> shopUsers(String shopId) => users
+      .where('shopId', isEqualTo: shopId)
+      .snapshots()
+      .map((s) => s.docs.map(AppUser.fromDoc).toList()
+        ..sort((a, b) => _newestFirst(a.createdAt, b.createdAt)));
+
+  /// Trouve un compte par numéro de téléphone (pour l'ajouter à l'équipe).
+  static Future<AppUser?> userByPhone(String displayPhone) async {
+    final q = await users.where('phone', isEqualTo: displayPhone).limit(1).get();
+    return q.docs.isEmpty ? null : AppUser.fromDoc(q.docs.first);
+  }
 
   static Future<void> updateProfile(String uid, Map<String, dynamic> data) =>
       users.doc(uid).set(data, SetOptions(merge: true));
@@ -61,6 +85,33 @@ class Db {
 
   static Future<void> saveSettings(ShopSettings s) =>
       settingsDoc.set(s.toMap(), SetOptions(merge: true));
+
+  // ---------------- Boutiques ----------------
+  static Stream<List<Shop>> allShops() => shops.snapshots().map((s) =>
+      s.docs.map(Shop.fromDoc).toList()..sort((a, b) => a.name.compareTo(b.name)));
+
+  static Future<void> saveShop(String? id, Map<String, dynamic> data) => id == null
+      ? shops.add({...data, 'createdAt': FieldValue.serverTimestamp()})
+      : shops.doc(id).set(data, SetOptions(merge: true));
+
+  // ---------------- Équipe (responsables, agents) ----------------
+  static Stream<StaffMember?> staffStream(String uid) => staff
+      .doc(uid)
+      .snapshots()
+      .map((d) => d.exists ? StaffMember.fromDoc(d) : null)
+      .handleError((_) {});
+
+  static Stream<List<StaffMember>> allStaff({String? shopId}) {
+    Query<Map<String, dynamic>> q = staff;
+    if (shopId != null) q = q.where('shopId', isEqualTo: shopId);
+    return q.snapshots().map((s) => s.docs.map(StaffMember.fromDoc).toList()
+      ..sort((a, b) => a.name.compareTo(b.name)));
+  }
+
+  static Future<void> saveStaff(StaffMember m) =>
+      staff.doc(m.uid).set(m.toMap());
+
+  static Future<void> removeStaff(String uid) => staff.doc(uid).delete();
 
   // ---------------- Catalogue ----------------
   static Stream<List<CatalogItem>> catalogItems({bool onlyActive = true}) {
@@ -90,11 +141,19 @@ class Db {
       .map((s) => s.docs.map(ShopOrder.fromDoc).toList()
         ..sort((a, b) => _newestFirst(a.createdAt, b.createdAt)));
 
-  static Stream<List<ShopOrder>> allOrders() => orders
-      .orderBy('createdAt', descending: true)
-      .limit(300)
-      .snapshots()
-      .map((s) => s.docs.map(ShopOrder.fromDoc).toList());
+  /// Toutes les commandes (Super Admin) ou celles d'une boutique (équipe).
+  static Stream<List<ShopOrder>> allOrders({String? shopId}) {
+    if (shopId != null) {
+      return orders.where('shopId', isEqualTo: shopId).snapshots().map((s) =>
+          s.docs.map(ShopOrder.fromDoc).toList()
+            ..sort((a, b) => _newestFirst(a.createdAt, b.createdAt)));
+    }
+    return orders
+        .orderBy('createdAt', descending: true)
+        .limit(500)
+        .snapshots()
+        .map((s) => s.docs.map(ShopOrder.fromDoc).toList());
+  }
 
   static Stream<ShopOrder?> orderStream(String id) => orders
       .doc(id)
@@ -104,21 +163,33 @@ class Db {
   /// Crée la commande avec un numéro AS-00001, AS-00002… et réserve les
   /// places des formations, en une seule opération.
   static Future<String> createOrder(ShopOrder o,
-      {Map<String, int> bookings = const {}}) {
-    return _fs.runTransaction<String>((tx) async {
-      final counter = await tx.get(orderCounter);
+      {Map<String, int> bookings = const {}, String shopCode = ''}) async {
+    final counterRef = counterFor(o.shopId);
+    String number = '';
+    final id = await _fs.runTransaction<String>((tx) async {
+      final counter = await tx.get(counterRef);
       final next = ((counter.data()?['next'] as num?)?.toInt() ?? 0) + 1;
       final ref = orders.doc();
-      tx.set(orderCounter, {'next': next});
+      number = shopCode.isEmpty
+          ? 'AS-${next.toString().padLeft(5, '0')}'
+          : 'AS-$shopCode-${next.toString().padLeft(5, '0')}';
+      tx.set(counterRef, {'next': next});
       tx.set(ref, {
         ...o.toNewMap(),
-        'number': 'AS-${next.toString().padLeft(5, '0')}',
+        'number': number,
       });
       for (final e in bookings.entries) {
         tx.update(catalog.doc(e.key), {'booked': FieldValue.increment(e.value)});
       }
       return ref.id;
     });
+    NotifyService.toStaff(
+      shopId: o.shopId,
+      title: 'Nouvelle commande $number',
+      body: '${o.buyerName} • ${o.itemsSummary}',
+      data: {'type': 'order', 'orderId': id},
+    );
+    return id;
   }
 
   /// Change le statut et prévient le client dans la discussion de la commande.
@@ -138,6 +209,14 @@ class Db {
         senderName: senderName,
         text: 'Commande ${o.displayNumber} : $msg',
         type: 'system',
+        notify: false,
+      );
+      NotifyService.toUser(
+        uid: o.buyerId,
+        kind: 'orders',
+        title: 'AÏCHA SERVICES',
+        body: 'Votre commande #${o.displayNumber} : $msg',
+        data: {'type': 'order', 'orderId': o.id},
       );
     }
   }
@@ -158,8 +237,10 @@ class Db {
   static String generalConversationId(String clientUid) => 'c_$clientUid';
   static String orderConversationId(String orderId) => 'o_$orderId';
 
-  static Map<String, dynamic> generalConversationData(AppUser u) => {
-        'shopId': u.shopId,
+  static Map<String, dynamic> generalConversationData(AppUser u,
+          {String? shopId}) =>
+      {
+        'shopId': shopId ?? u.shopId,
         'clientId': u.uid,
         'clientName': u.name,
         'clientPhone': u.phone,
@@ -183,11 +264,18 @@ class Db {
           s.docs.map(Conversation.fromDoc).toList()
             ..sort((a, b) => _newestFirst(a.lastAt, b.lastAt)));
 
-  static Stream<List<Conversation>> allConversations() => conversations
-      .orderBy('lastAt', descending: true)
-      .limit(300)
-      .snapshots()
-      .map((s) => s.docs.map(Conversation.fromDoc).toList());
+  static Stream<List<Conversation>> allConversations({String? shopId}) {
+    if (shopId != null) {
+      return conversations.where('shopId', isEqualTo: shopId).snapshots().map(
+          (s) => s.docs.map(Conversation.fromDoc).toList()
+            ..sort((a, b) => _newestFirst(a.lastAt, b.lastAt)));
+    }
+    return conversations
+        .orderBy('lastAt', descending: true)
+        .limit(500)
+        .snapshots()
+        .map((s) => s.docs.map(Conversation.fromDoc).toList());
+  }
 
   static Stream<Conversation?> conversationStream(String id) => conversations
       .doc(id)
@@ -216,9 +304,12 @@ class Db {
     String itemName = '',
     String fileUrl = '',
     String fileName = '',
+    bool notify = true,
   }) async {
     final convRef = conversations.doc(conversationId);
-    final exists = (await convRef.get()).exists;
+    final convSnap = await convRef.get();
+    final exists = convSnap.exists;
+    final convData = convSnap.data() ?? createIfMissing;
     final batch = _fs.batch();
     final preview = type == 'service'
         ? 'Service proposé : $itemName'
@@ -255,6 +346,26 @@ class Db {
       'createdAt': FieldValue.serverTimestamp(),
     });
     await batch.commit();
+    if (!notify) return;
+    final shopId = (convData['shopId'] ?? 'main').toString();
+    final orderId = (convData['orderId'] ?? '').toString();
+    final notifData = {'type': 'chat', 'conversationId': conversationId};
+    if (senderRole == 'client') {
+      NotifyService.toStaff(
+        shopId: shopId,
+        title: 'Nouveau message de $senderName',
+        body: preview,
+        data: notifData,
+      );
+    } else {
+      NotifyService.toUser(
+        uid: (convData['clientId'] ?? '').toString(),
+        kind: 'messages',
+        title: senderName,
+        body: orderId.isEmpty ? preview : '${convData['title'] ?? ''} : $preview',
+        data: notifData,
+      );
+    }
   }
 
   /// Remet à zéro le compteur de messages non lus (côté client ou boutique).
@@ -263,4 +374,18 @@ class Db {
           .doc(conversationId)
           .update({asShop ? 'unreadForShop' : 'unreadForClient': 0})
           .catchError((_) {});
+
+  // ---------------- Fichiers ----------------
+  static Future<void> addFile(Map<String, dynamic> data) =>
+      files.add({...data, 'createdAt': FieldValue.serverTimestamp()});
+
+  static Stream<List<FileRecord>> myFiles(String uid) => files
+      .where('ownerId', isEqualTo: uid)
+      .snapshots()
+      .map((s) => s.docs.map(FileRecord.fromDoc).toList()
+        ..sort((a, b) => _newestFirst(a.createdAt, b.createdAt)));
+
+  // ---------------- Journal des notifications commerciales ----------------
+  static Future<void> logNotification(Map<String, dynamic> data) =>
+      notifications.add({...data, 'createdAt': FieldValue.serverTimestamp()});
 }

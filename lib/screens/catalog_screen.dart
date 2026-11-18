@@ -2,22 +2,22 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../config.dart';
-import '../models/app_user.dart';
 import '../models/catalog_item.dart';
 import '../models/promotion.dart';
 import '../services/db.dart';
+import '../services/session.dart';
 import '../state/cart.dart';
 import '../widgets/common.dart';
 import '../widgets/item_card.dart';
 import '../widgets/product_image.dart';
 import 'cart_screen.dart';
+import 'shop_picker_screen.dart';
 
 /// Accueil : en-tête, recherche, catégories, Nos offres, Services populaires,
 /// tous les services.
 class CatalogScreen extends StatefulWidget {
-  final AppUser? user;
   final VoidCallback onOpenChat;
-  const CatalogScreen({super.key, required this.user, required this.onOpenChat});
+  const CatalogScreen({super.key, required this.onOpenChat});
 
   @override
   State<CatalogScreen> createState() => _CatalogScreenState();
@@ -48,24 +48,28 @@ class _CatalogScreenState extends State<CatalogScreen> {
     }).toList();
   }
 
-  void _openCart() => Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => CartScreen(user: widget.user)));
+  void _openCart() => Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => CartScreen(user: sessionOf(context, listen: false).user)));
 
   @override
   Widget build(BuildContext context) {
     final cartCount = context.watch<Cart>().count;
+    final session = sessionOf(context);
+    final shopId = session.clientShopId;
     return Scaffold(
       body: StreamBuilder<List<CatalogItem>>(
         stream: _items,
         builder: (context, snap) {
-          final all = snap.data ?? const <CatalogItem>[];
+          final all = (snap.data ?? const <CatalogItem>[])
+              .where((i) => shopId.isEmpty || i.availableIn(shopId))
+              .toList();
           final filtered = _filter(all);
           final popular = all.where((i) => i.popular).toList();
           final popularList = popular.isNotEmpty ? popular : all.take(6).toList();
 
           return CustomScrollView(
             slivers: [
-              SliverToBoxAdapter(child: _header(cartCount)),
+              SliverToBoxAdapter(child: _header(cartCount, session)),
               SliverToBoxAdapter(child: _categories()),
               if (!snap.hasData)
                 const SliverFillRemaining(
@@ -84,7 +88,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 ),
                 _grid(filtered),
               ] else ...[
-                SliverToBoxAdapter(child: _offers()),
+                SliverToBoxAdapter(child: _offers(shopId)),
                 if (popularList.isNotEmpty) ...[
                   const SliverToBoxAdapter(child: SectionTitle('Services populaires')),
                   SliverToBoxAdapter(
@@ -112,7 +116,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
     );
   }
 
-  Widget _header(int cartCount) {
+  Widget _header(int cartCount, Session session) {
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -166,7 +170,29 @@ class _CatalogScreenState extends State<CatalogScreen> {
               ),
             ),
           ]),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
+          if (session.shops.isNotEmpty) ...[
+            InkWell(
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => const ShopPickerScreen())),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.place_rounded, color: Colors.white70, size: 16),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    session.clientShopId.isEmpty
+                        ? 'Choisir ma boutique'
+                        : session.myShop.name,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                const Icon(Icons.expand_more, color: Colors.white70),
+              ]),
+            ),
+            const SizedBox(height: 10),
+          ],
           TextField(
             controller: _search,
             onChanged: (v) => setState(() => _query = v),
@@ -242,11 +268,13 @@ class _CatalogScreenState extends State<CatalogScreen> {
     );
   }
 
-  Widget _offers() {
+  Widget _offers(String shopId) {
     return StreamBuilder<List<Promotion>>(
       stream: _promos,
       builder: (context, snap) {
-        final promos = snap.data ?? const <Promotion>[];
+        final promos = (snap.data ?? const <Promotion>[])
+            .where((p) => shopId.isEmpty || p.visibleIn(shopId))
+            .toList();
         if (promos.isEmpty) {
           // Bandeau d'accueil par défaut quand aucune offre n'est publiée.
           return Padding(

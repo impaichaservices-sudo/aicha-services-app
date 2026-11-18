@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../config.dart';
 import '../models/file_record.dart';
 import '../services/db.dart';
+import '../services/file_service.dart';
 import '../utils.dart';
 import '../widgets/common.dart';
 
@@ -56,9 +56,16 @@ class MyFilesScreen extends StatelessWidget {
                   title: Text(f.name,
                       maxLines: 1, overflow: TextOverflow.ellipsis),
                   subtitle: Text('${_size(f.size)} • ${shortDate(f.createdAt)}'),
-                  trailing: const Icon(Icons.open_in_new),
-                  onTap: () => launchUrl(Uri.parse(f.url),
-                      mode: LaunchMode.externalApplication),
+                  trailing: const Icon(Icons.download_rounded),
+                  onTap: () async {
+                    final messenger = ScaffoldMessenger.of(context);
+                    try {
+                      await FileService.open(f.url, f.name);
+                    } catch (e) {
+                      messenger.showSnackBar(SnackBar(
+                          content: Text(e.toString().replaceFirst('Exception: ', ''))));
+                    }
+                  },
                 ),
               );
             },

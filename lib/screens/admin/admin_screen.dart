@@ -15,6 +15,7 @@ import 'admin_promotions_screen.dart';
 import 'admin_settings_screen.dart';
 import 'admin_shops_screen.dart';
 import 'admin_team_screen.dart';
+import '../inbox_screen.dart';
 
 /// Gestion : Super Admin (toute l'entreprise) ou équipe d'une boutique.
 class AdminScreen extends StatefulWidget {
@@ -56,8 +57,17 @@ class _AdminScreenState extends State<AdminScreen> {
 
     return Scaffold(
       appBar: AppBar(
-          title: Text(s.isSuper ? 'Administration' : 'Gestion'),
-          automaticallyImplyLeading: false),
+        title: Text(s.isSuper ? 'Administration' : 'Gestion'),
+        automaticallyImplyLeading: false,
+        actions: [
+          InboxBell(
+            uid: s.uid,
+            staff: true,
+            shopId: scope,
+            seenAt: s.user?.staffSeenAt,
+          ),
+        ],
+      ),
       body: StreamBuilder<List<ShopOrder>>(
         stream: _orders,
         builder: (context, os) {

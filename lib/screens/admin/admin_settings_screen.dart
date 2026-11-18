@@ -164,19 +164,6 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                         prefixIcon: Icon(Icons.delivery_dining)),
                   ),
                   if (_global) ...[
-                    _title('Envoi de fichiers (Cloudinary)'),
-                    TextFormField(
-                      controller: _cloud,
-                      decoration: const InputDecoration(
-                          labelText: 'Cloud name', hintText: 'ex : dxyz123ab'),
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: _preset,
-                      decoration: const InputDecoration(
-                          labelText: 'Upload preset (non signé)',
-                          hintText: 'ex : aicha_unsigned'),
-                    ),
                     _title('Notifications (serveur Cloudflare)'),
                     TextFormField(
                       controller: _notify,

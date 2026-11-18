@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 
 import '../models/app_user.dart';
 import '../models/chat.dart';
+import '../models/inbox_item.dart';
+import '../models/order.dart';
 import '../models/shop.dart';
 import '../models/shop_settings.dart';
 import '../models/staff.dart';
@@ -34,8 +36,12 @@ class _HomeScreenState extends State<HomeScreen> {
   late final Stream<ShopSettings> _settings = Db.settings();
   late final Stream<List<Conversation>> _convs =
       Db.clientConversations(widget.uid);
+  late final Stream<List<InboxItem>> _inbox = Db.clientInbox(widget.uid);
 
-  void _goTo(int i) => setState(() => _index = i);
+  void _goTo(int i) {
+    setState(() => _index = i);
+    if (i == 1) Db.markSeen(widget.uid, 'ordersSeenAt');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -90,9 +96,17 @@ class _HomeScreenState extends State<HomeScreen> {
       body: IndexedStack(index: index, children: pages),
       bottomNavigationBar: StreamBuilder<List<Conversation>>(
         stream: _convs,
-        builder: (context, cs) {
+        builder: (context, cs) => StreamBuilder<List<InboxItem>>(
+        stream: _inbox,
+        builder: (context, ib) {
           final unread = (cs.data ?? const <Conversation>[])
               .fold<int>(0, (s, c) => s + c.unreadForClient);
+          final seen = session.user?.ordersSeenAt;
+          final orderNews = index == 1
+              ? 0
+              : (ib.data ?? const <InboxItem>[])
+                  .where((n) => n.type == 'order' && n.isNewerThan(seen))
+                  .length;
           return NavigationBar(
             selectedIndex: index,
             onDestinationSelected: _goTo,
@@ -101,9 +115,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   icon: Icon(Icons.home_outlined),
                   selectedIcon: Icon(Icons.home_rounded),
                   label: 'Accueil'),
-              const NavigationDestination(
-                  icon: Icon(Icons.receipt_long_outlined),
-                  selectedIcon: Icon(Icons.receipt_long_rounded),
+              NavigationDestination(
+                  icon: Badge(
+                    isLabelVisible: orderNews > 0,
+                    label: Text('$orderNews'),
+                    child: const Icon(Icons.receipt_long_outlined),
+                  ),
+                  selectedIcon: const Icon(Icons.receipt_long_rounded),
                   label: 'Commandes'),
               NavigationDestination(
                 icon: Badge(
@@ -119,11 +137,62 @@ class _HomeScreenState extends State<HomeScreen> {
                   selectedIcon: Icon(Icons.person_rounded),
                   label: 'Profil'),
               if (session.canManage)
-                const NavigationDestination(
-                    icon: Icon(Icons.storefront_outlined),
-                    selectedIcon: Icon(Icons.storefront_rounded),
+                NavigationDestination(
+                    icon: _StaffBadge(shopId: session.managedShopId,
+                        child: const Icon(Icons.storefront_outlined)),
+                    selectedIcon: _StaffBadge(shopId: session.managedShopId,
+                        child: const Icon(Icons.storefront_rounded)),
                     label: 'Gestion'),
             ],
+          );
+        },
+      ),
+      ),
+    );
+  }
+}
+
+/// Pastille de l'onglet Gestion : nouvelles commandes + messages non lus.
+class _StaffBadge extends StatefulWidget {
+  final String? shopId;
+  final Widget child;
+  const _StaffBadge({required this.shopId, required this.child});
+
+  @override
+  State<_StaffBadge> createState() => _StaffBadgeState();
+}
+
+class _StaffBadgeState extends State<_StaffBadge> {
+  late Stream<List<ShopOrder>> _orders = Db.allOrders(shopId: widget.shopId);
+  late Stream<List<Conversation>> _convs =
+      Db.allConversations(shopId: widget.shopId);
+
+  @override
+  void didUpdateWidget(covariant _StaffBadge old) {
+    super.didUpdateWidget(old);
+    if (old.shopId != widget.shopId) {
+      _orders = Db.allOrders(shopId: widget.shopId);
+      _convs = Db.allConversations(shopId: widget.shopId);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<ShopOrder>>(
+      stream: _orders,
+      builder: (context, os) => StreamBuilder<List<Conversation>>(
+        stream: _convs,
+        builder: (context, cs) {
+          final n = (os.data ?? const <ShopOrder>[])
+                  .where((o) => o.status == 'nouvelle')
+                  .length +
+              (cs.data ?? const <Conversation>[])
+                  .fold<int>(0, (a, c) => a + c.unreadForShop);
+          return Badge(
+            isLabelVisible: n > 0,
+            label: Text(n > 99 ? '99+' : '$n'),
+            backgroundColor: const Color(0xFFD32F2F),
+            child: widget.child,
           );
         },
       ),

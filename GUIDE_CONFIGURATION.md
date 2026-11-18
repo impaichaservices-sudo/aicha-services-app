@@ -39,16 +39,12 @@ Un responsable peut ensuite ajouter lui-même ses agents.
 Ces droits sont **vérifiés par Firebase** (règles de sécurité), pas
 seulement par l'application.
 
-## 3. Envoi de fichiers — Cloudinary (gratuit, sans carte)
+## 3. Envoi de fichiers
 
-1. Créer un compte sur **cloudinary.com** (gratuit).
-2. Noter le **Cloud name** (affiché sur le tableau de bord).
-3. Settings → **Upload** → Upload presets → **Add upload preset** :
-   - Signing mode : **Unsigned**
-   - Nom : `aicha_unsigned` → Save.
-4. Settings → **Security** → cocher **« Allow delivery of PDF and ZIP files »**.
-5. Dans l'application : Gestion → **Paramètres** → Cloud name + Upload preset
-   → Enregistrer.
+Aucune configuration : les fichiers (photos, PDF, Word… jusqu'à 15 Mo) sont
+enregistrés directement dans Firebase (collection `blobs`, découpés en
+morceaux). Le quota gratuit de Firebase est de 1 Go de données au total.
+Pour les fichiers plus lourds, le client utilise WhatsApp.
 
 ## 4. Notifications push — Cloudflare (gratuit, sans carte)
 
@@ -97,7 +93,8 @@ le service concerné.
 | `orders` | commandes (`shopId`, numéro AS-DJD-00125) |
 | `counters` | compteurs des numéros de commande |
 | `conversations` + `messages` | discussions (générales et par commande) |
-| `files` | fichiers envoyés (lien Cloudinary) |
+| `files` | liste des fichiers envoyés |
+| `blobs` | contenu des fichiers (morceaux) |
 | `promotions` | nouveautés et offres (`shops` = `all` ou liste) |
 | `notifications` | historique des notifications envoyées |
 | `settings/shop` | paramètres généraux, Cloudinary, adresse du serveur |

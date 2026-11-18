@@ -190,6 +190,42 @@ service cloud.firestore {
         resource.data.ownerId == me() || isSuper());
     }
 
+    // ---------- Contenu des fichiers (découpé en morceaux) ----------
+    function blob(id) { return /databases/$(database)/documents/blobs/$(id); }
+    function canReadBlob(d) {
+      return d.ownerId == me()
+        || manages(d.get('shopId', 'main'))
+        || get(conv(d.conversationId)).data.clientId == me();
+    }
+    match /blobs/{id} {
+      allow get: if signedIn() && canReadBlob(resource.data);
+      allow create: if signedIn()
+        && request.resource.data.ownerId == me()
+        && request.resource.data.size <= 15728640;
+      allow update: if false;
+      allow delete: if signedIn() && (resource.data.ownerId == me() || isSuper());
+
+      match /chunks/{c} {
+        allow read: if signedIn() && canReadBlob(get(blob(id)).data);
+        allow create: if signedIn() && getAfter(blob(id)).data.ownerId == me();
+        allow update, delete: if false;
+      }
+    }
+
+    // ---------- Notifications dans l'application (cloche) ----------
+    match /inbox/{id} {
+      allow get: if signedIn() && (
+        resource.data.get('toUid', '') == me()
+        || (resource.data.audience == 'staff'
+            && manages(resource.data.get('shopId', 'main'))));
+      allow list: if signedIn() && (
+        resource.data.toUid == me()
+        || (resource.data.audience == 'staff' && manages(resource.data.shopId)));
+      allow create: if signedIn() && request.resource.data.fromUid == me();
+      allow update: if false;
+      allow delete: if isSuper();
+    }
+
     match /payments/{id} {
       allow read, write: if false;
     }

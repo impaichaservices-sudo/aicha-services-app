@@ -24,6 +24,9 @@ class AppUser {
   final String shopId;
   final NotifPrefs notif;
   final DateTime? createdAt;
+  final DateTime? inboxSeenAt; // dernière ouverture de la cloche
+  final DateTime? ordersSeenAt; // dernière ouverture de « Commandes »
+  final DateTime? staffSeenAt; // dernière ouverture de la cloche « équipe »
 
   const AppUser({
     required this.uid,
@@ -33,6 +36,9 @@ class AppUser {
     this.shopId = 'main',
     this.notif = const NotifPrefs(),
     this.createdAt,
+    this.inboxSeenAt,
+    this.ordersSeenAt,
+    this.staffSeenAt,
   });
 
   factory AppUser.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
@@ -46,6 +52,9 @@ class AppUser {
       shopId: (d['shopId'] ?? 'main') as String,
       notif: NotifPrefs.fromMap(n is Map ? Map<String, dynamic>.from(n) : null),
       createdAt: (d['createdAt'] as Timestamp?)?.toDate(),
+      inboxSeenAt: (d['inboxSeenAt'] as Timestamp?)?.toDate(),
+      ordersSeenAt: (d['ordersSeenAt'] as Timestamp?)?.toDate(),
+      staffSeenAt: (d['staffSeenAt'] as Timestamp?)?.toDate(),
     );
   }
 }

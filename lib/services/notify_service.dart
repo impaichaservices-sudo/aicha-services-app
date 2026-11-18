@@ -62,12 +62,23 @@ class NotifyService {
       m.map((k, v) => MapEntry(k, v.toString()));
 
   /// Prévenir l'équipe d'une boutique (et le Super Admin).
+  static String get _me => FirebaseAuth.instance.currentUser?.uid ?? '';
+
   static void toStaff({
     required String shopId,
     required String title,
     required String body,
     Map<String, dynamic> data = const {},
   }) {
+    Db.addInbox({
+      'audience': 'staff',
+      'toUid': '',
+      'shopId': shopId,
+      'fromUid': _me,
+      'title': title,
+      'body': body,
+      'data': _strings({...data, 'audience': 'staff'}),
+    }).catchError((_) {});
     _post({
       'action': 'to_staff',
       'shopId': shopId,
@@ -86,6 +97,15 @@ class NotifyService {
     Map<String, dynamic> data = const {},
   }) {
     if (uid.isEmpty) return;
+    Db.addInbox({
+      'audience': 'client',
+      'toUid': uid,
+      'shopId': '',
+      'fromUid': _me,
+      'title': title,
+      'body': body,
+      'data': _strings({...data, 'audience': 'client'}),
+    }).catchError((_) {});
     _post({
       'action': 'to_user',
       'uid': uid,
@@ -197,11 +217,13 @@ class PushService {
     ));
   }
 
-  static Future<void> _open(RemoteMessage m) async {
+  static Future<void> _open(RemoteMessage m) => openData(m.data);
+
+  /// Ouvre l'écran lié à une notification (push ou cloche).
+  static Future<void> openData(Map<String, dynamic> d) async {
     final nav = navigatorKey.currentState;
     final s = _session;
     if (nav == null || s == null) return;
-    final d = m.data;
     final asStaff = d['audience'] == 'staff' && s.canManage;
     switch (d['type']) {
       case 'order':

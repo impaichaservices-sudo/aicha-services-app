@@ -11,6 +11,7 @@ import '../widgets/common.dart';
 import '../widgets/item_card.dart';
 import '../widgets/product_image.dart';
 import 'cart_screen.dart';
+import 'inbox_screen.dart';
 import 'shop_picker_screen.dart';
 
 /// Accueil : en-tête, recherche, catégories, Nos offres, Services populaires,
@@ -158,6 +159,11 @@ class _CatalogScreenState extends State<CatalogScreen> {
                       style: TextStyle(color: Colors.white70, fontSize: 12.5)),
                 ],
               ),
+            ),
+            InboxBell(
+              uid: session.uid,
+              seenAt: session.user?.inboxSeenAt,
+              color: Colors.white,
             ),
             IconButton(
               onPressed: _openCart,

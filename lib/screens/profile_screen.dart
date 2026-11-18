@@ -272,8 +272,20 @@ class _NotificationSettingsScreenState extends State<NotificationSettingsScreen>
           ),
           const SizedBox(height: 12),
           const Text(
-            'Les informations importantes concernant une commande en cours restent toujours visibles dans « Commandes » et « Discussion ».',
+            'Les informations importantes concernant une commande en cours restent toujours visibles dans « Commandes », « Discussion » et la cloche 🔔.',
             style: TextStyle(color: Colors.black54, fontSize: 13),
+          ),
+          const SizedBox(height: 16),
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(14),
+              child: Text(
+                'Vous ne recevez pas les notifications quand l\'application est fermée ?\n\n'
+                'Paramètres du téléphone → Applications → Aïcha Services → '
+                'Batterie → « Sans restriction », et vérifiez que les notifications '
+                'sont autorisées.',
+              ),
+            ),
           ),
         ],
       ),

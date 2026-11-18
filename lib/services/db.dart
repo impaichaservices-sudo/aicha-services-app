@@ -5,6 +5,7 @@ import '../models/app_user.dart';
 import '../models/catalog_item.dart';
 import '../models/chat.dart';
 import '../models/file_record.dart';
+import '../models/inbox_item.dart';
 import '../models/order.dart';
 import '../models/promotion.dart';
 import '../models/shop.dart';
@@ -39,6 +40,8 @@ class Db {
       _fs.collection('files');
   static CollectionReference<Map<String, dynamic>> get notifications =>
       _fs.collection('notifications');
+  static CollectionReference<Map<String, dynamic>> get inbox =>
+      _fs.collection('inbox');
   static DocumentReference<Map<String, dynamic>> counterFor(String shopId) =>
       _fs.collection('counters').doc(shopId == 'main' ? 'orders' : shopId);
 
@@ -314,7 +317,7 @@ class Db {
     final preview = type == 'service'
         ? 'Service proposé : $itemName'
         : type == 'file'
-            ? 'Fichier : $fileName'
+            ? (text.isNotEmpty ? text : 'Fichier : $fileName')
             : text;
     final convUpdate = <String, dynamic>{
       'lastMessage': preview.length > 120 ? '${preview.substring(0, 120)}…' : preview,
@@ -388,4 +391,26 @@ class Db {
   // ---------------- Journal des notifications commerciales ----------------
   static Future<void> logNotification(Map<String, dynamic> data) =>
       notifications.add({...data, 'createdAt': FieldValue.serverTimestamp()});
+
+  // ---------------- Notifications dans l'application (cloche) ----------------
+  static Future<void> addInbox(Map<String, dynamic> data) =>
+      inbox.add({...data, 'createdAt': FieldValue.serverTimestamp()});
+
+  static Stream<List<InboxItem>> clientInbox(String uid) => inbox
+      .where('toUid', isEqualTo: uid)
+      .snapshots()
+      .map((s) => s.docs.map(InboxItem.fromDoc).toList()
+        ..sort((a, b) => _newestFirst(a.createdAt, b.createdAt)));
+
+  /// Notifications de l'équipe : une boutique, ou toutes (Super Admin).
+  static Stream<List<InboxItem>> staffInbox({String? shopId}) {
+    Query<Map<String, dynamic>> q = inbox.where('audience', isEqualTo: 'staff');
+    if (shopId != null) q = q.where('shopId', isEqualTo: shopId);
+    return q.snapshots().map((s) => s.docs.map(InboxItem.fromDoc).toList()
+      ..sort((a, b) => _newestFirst(a.createdAt, b.createdAt)));
+  }
+
+  /// Marque comme vus (field : inboxSeenAt, ordersSeenAt ou staffSeenAt).
+  static Future<void> markSeen(String uid, String field) =>
+      users.doc(uid).set({field: FieldValue.serverTimestamp()}, SetOptions(merge: true));
 }

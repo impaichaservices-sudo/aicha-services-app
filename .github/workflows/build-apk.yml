@@ -1,4 +1,4 @@
-Construire l'APK
+name: Construire l'APK
 
 on:
   push:

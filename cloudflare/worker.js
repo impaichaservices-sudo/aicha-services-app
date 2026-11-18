@@ -53,7 +53,12 @@ export default {
           condition: `'staff_${shop}' in topics || 'staff_all' in topics`,
         });
       } else if (body.action === 'to_user') {
-        if (!isSuper && !staffActive) throw httpErr(403, 'interdit');
+        if (!isSuper && !staffActive) {
+          // Un client peut prévenir uniquement un membre de l'équipe
+          // (discussion attribuée à un agent) ou le Super Admin.
+          const target = await getDoc(access, projectId, `staff/${body.uid}`);
+          if (!target && !supers.includes(body.uid)) throw httpErr(403, 'interdit');
+        }
         const userDoc = await getDoc(access, projectId, `users/${body.uid}`);
         if (!userDoc) return json({ ok: true, sent: 0 });
         const user = fields(userDoc);
@@ -76,6 +81,47 @@ export default {
           ...message,
           condition: topics.map((t) => `'${t}' in topics`).join(' || '),
         });
+      } else if (body.action === 'incoming_call' || body.action === 'call_ended') {
+        // Appel par internet : faire sonner (ou arrêter) les téléphones appelés.
+        const callDoc = await getDoc(access, projectId, `calls/${body.callId}`);
+        if (!callDoc) throw httpErr(404, 'appel introuvable');
+        const c = fields(callDoc);
+        const participant =
+          c.callerId === uid || c.clientId === uid || c.answeredBy === uid ||
+          isSuper || (staffActive && staff.shopId === c.shopId);
+        if (!participant) throw httpErr(403, 'interdit');
+        if (body.action === 'incoming_call' && c.callerId !== uid) throw httpErr(403, 'interdit');
+        const data = {
+          type: body.action,
+          callId: String(body.callId),
+          callerId: String(c.callerId || ''),
+          callerName: cut(c.callerName, 80),
+          conversationId: String(c.conversationId || ''),
+          shopId: String(c.shopId || ''),
+          timestamp: String(Date.now()),
+        };
+        const dataMsg = { data, android: { priority: 'high', ttl: '45s' } };
+        const targets = [];
+        if (c.callerRole === 'shop') {
+          targets.push(c.clientId);
+        } else if (c.calleeId) {
+          targets.push(c.calleeId);
+        }
+        for (const t of targets) {
+          const u = await getDoc(access, projectId, `users/${t}`);
+          const tokens = u && Array.isArray(fields(u).fcmTokens) ? fields(u).fcmTokens.slice(-10) : [];
+          for (const token of tokens) sent += await send(access, projectId, { ...dataMsg, token });
+        }
+        if (c.callerRole !== 'shop') {
+          // Discussion pas encore attribuée (ou responsable) : toute l'équipe de la boutique
+          const shop = topicSafe(c.shopId || 'main');
+          if (!c.calleeId || body.action === 'call_ended') {
+            const cond = shop === 'main'
+              ? `'staff_main' in topics || 'staff_all' in topics`
+              : `'staff_${shop}' in topics`;
+            sent += await send(access, projectId, { ...dataMsg, condition: cond });
+          }
+        }
       } else {
         throw httpErr(400, 'action inconnue');
       }

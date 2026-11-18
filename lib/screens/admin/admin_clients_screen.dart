@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../config.dart';
 import '../../models/app_user.dart';
+import '../../services/call_service.dart';
 import '../../services/db.dart';
 import '../../services/session.dart';
 import '../../utils.dart';
@@ -92,6 +93,18 @@ class _AdminClientsScreenState extends State<AdminClientsScreen> {
                                 clientPhone: u.phone,
                               ),
                             ));
+                          } else if (a == 'netcall') {
+                            final sid = widget.shopId ?? u.shopId;
+                            CallService.openCall(
+                              context,
+                              conversationId: Db.generalConversationId(u.uid),
+                              createIfMissing:
+                                  Db.generalConversationData(u, shopId: sid),
+                              asShop: true,
+                              shopId: sid,
+                              otherName: u.name,
+                              me: widget.me,
+                            );
                           } else if (a == 'call') {
                             launchUrl(Uri.parse('tel:${u.phone}'));
                           } else if (a == 'wa') {
@@ -101,7 +114,11 @@ class _AdminClientsScreenState extends State<AdminClientsScreen> {
                         },
                         itemBuilder: (_) => const [
                           PopupMenuItem(value: 'chat', child: Text('Discuter')),
-                          PopupMenuItem(value: 'call', child: Text('Appeler')),
+                          PopupMenuItem(
+                              value: 'netcall',
+                              child: Text('Appeler par internet')),
+                          PopupMenuItem(
+                              value: 'call', child: Text('Appeler (numéro)')),
                           PopupMenuItem(value: 'wa', child: Text('WhatsApp')),
                         ],
                       ),

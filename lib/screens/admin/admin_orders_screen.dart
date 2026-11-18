@@ -6,6 +6,7 @@ import '../../config.dart';
 import '../../models/app_user.dart';
 import '../../models/order.dart';
 import '../../services/db.dart';
+import '../../services/call_service.dart';
 import '../../services/session.dart';
 import '../../utils.dart';
 import '../../widgets/common.dart';
@@ -16,10 +17,12 @@ import '../chat_screen.dart';
 const _adminFilters = {
   'a_traiter': 'À traiter',
   'nouvelles': 'Nouvelles',
+  'confirmees': 'Confirmées',
   'en_cours': 'En cours',
   'pretes': 'Prêtes',
   'devis': 'Devis à faire',
   'terminees': 'Terminées',
+  'annulees': 'Annulées',
   'toutes': 'Toutes',
 };
 
@@ -29,14 +32,18 @@ bool _match(ShopOrder o, String f) {
       return !o.isClosed;
     case 'nouvelles':
       return o.status == 'nouvelle';
+    case 'confirmees':
+      return o.status == 'confirmee';
     case 'en_cours':
-      return o.status == 'confirmee' || o.status == 'en_cours';
+      return o.status == 'en_cours';
+    case 'annulees':
+      return o.status == 'annulee';
     case 'pretes':
       return o.status == 'prete';
     case 'devis':
       return o.quoteNeeded && o.quotedTotal == null && !o.isClosed;
     case 'terminees':
-      return o.isClosed;
+      return o.status == 'livree';
   }
   return true;
 }
@@ -318,11 +325,24 @@ class AdminOrderDetailScreen extends StatelessWidget {
                                 icon: const Icon(Icons.chat_bubble_rounded),
                                 label: const Text('Discussion'),
                               ),
+                              FilledButton.tonalIcon(
+                                onPressed: () => CallService.openCall(
+                                  context,
+                                  conversationId: Db.orderConversationId(o.id),
+                                  createIfMissing: Db.orderConversationData(o),
+                                  asShop: true,
+                                  shopId: o.shopId,
+                                  otherName: o.buyerName,
+                                  me: me,
+                                ),
+                                icon: const Icon(Icons.wifi_calling_3),
+                                label: const Text('Appeler par Internet'),
+                              ),
                               OutlinedButton.icon(
                                 onPressed: () =>
                                     launchUrl(Uri.parse('tel:${o.phone}')),
                                 icon: const Icon(Icons.call),
-                                label: const Text('Appeler'),
+                                label: const Text('Appeler (numéro)'),
                               ),
                               OutlinedButton.icon(
                                 onPressed: () => launchUrl(whatsappUri(o.phone),

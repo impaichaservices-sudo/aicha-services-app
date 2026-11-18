@@ -1,0 +1,6 @@
+- Appels par internet améliorés : sonnerie même application fermée, écran verrouillé, appel annulé / refusé / impossible
+- Messages vocaux : écouter avant d'envoyer, barre de progression
+- Indicateur d'envoi des messages (🕓 en attente, ✓ envoyé)
+- Mode hors connexion : commandes et messages envoyés automatiquement au retour d'Internet
+- Demande de service personnalisé depuis l'accueil
+- Boutons d'appel dans les commandes et les fiches services

@@ -31,6 +31,10 @@ class Session {
   /// La boutique de l'équipe (null pour le Super Admin = toutes).
   String? get managedShopId => isSuper ? null : (isStaff ? staff!.shopId : null);
 
+  /// Agent simple (pas responsable) : ne voit que ses discussions.
+  String? get agentUid =>
+      (!isSuper && isStaff && staff!.role != 'manager') ? uid : null;
+
   bool can(String perm) => isSuper || (isStaff && staff!.can(perm));
 
   /// Boutique choisie par le client (ou boutique par défaut).

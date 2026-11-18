@@ -10,6 +10,7 @@ import 'order_detail_screen.dart';
 const _filters = {
   'toutes': 'Toutes',
   'nouvelles': 'Nouvelles',
+  'confirmees': 'Confirmées',
   'en_cours': 'En cours',
   'pretes': 'Prêtes',
   'terminees': 'Terminées',
@@ -20,8 +21,10 @@ bool orderMatches(ShopOrder o, String filter) {
   switch (filter) {
     case 'nouvelles':
       return o.status == 'nouvelle';
+    case 'confirmees':
+      return o.status == 'confirmee';
     case 'en_cours':
-      return o.status == 'confirmee' || o.status == 'en_cours';
+      return o.status == 'en_cours';
     case 'pretes':
       return o.status == 'prete';
     case 'terminees':
@@ -38,12 +41,14 @@ class OrdersScreen extends StatefulWidget {
   final AppUser? user;
   final String initialFilter;
   final bool standalone;
+  final VoidCallback? onExplore;
   const OrdersScreen({
     super.key,
     required this.uid,
     required this.user,
     this.initialFilter = 'toutes',
     this.standalone = false,
+    this.onExplore,
   });
 
   @override
@@ -95,10 +100,15 @@ class _OrdersScreenState extends State<OrdersScreen> {
               final list =
                   snap.data!.where((o) => orderMatches(o, _filter)).toList();
               if (list.isEmpty) {
-                return const EmptyState(
+                return EmptyState(
                   icon: Icons.receipt_long_outlined,
-                  title: 'Aucune commande ici',
-                  message: 'Vos commandes apparaîtront ici avec leur suivi.',
+                  title: _filter == 'toutes' ? 'Aucune commande.' : 'Aucune commande ici',
+                  message: 'Vous n\'avez encore aucune commande.',
+                  action: widget.onExplore == null
+                      ? null
+                      : FilledButton(
+                          onPressed: widget.onExplore,
+                          child: const Text('Découvrir nos services')),
                 );
               }
               return ListView.separated(

@@ -5,6 +5,7 @@ import '../config.dart';
 import '../models/catalog_item.dart';
 import '../services/auth_service.dart';
 import '../services/db.dart';
+import '../services/call_service.dart';
 import '../services/session.dart';
 import '../state/cart.dart';
 import '../widgets/common.dart';
@@ -62,6 +63,24 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
         initialText: 'Bonjour, je voudrais des informations sur : ${item.name}',
       ),
     ));
+  }
+
+  Future<void> _call() async {
+    final uid = AuthService.current?.uid;
+    if (uid == null) return;
+    final s = sessionOf(context, listen: false);
+    final shopId = s.clientShopId.isEmpty ? 'main' : s.clientShopId;
+    final user = await Db.userStream(uid).first;
+    if (user == null || !mounted) return;
+    CallService.openCall(
+      context,
+      conversationId: Db.generalConversationId(uid),
+      createIfMissing: Db.generalConversationData(user, shopId: shopId),
+      asShop: false,
+      shopId: shopId,
+      otherName: s.teamName(shopId),
+      me: user,
+    );
   }
 
   @override
@@ -212,13 +231,21 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                     ]),
                   ],
                   const SizedBox(height: 12),
-                  Center(
-                    child: TextButton.icon(
-                      onPressed: _ask,
-                      icon: const Icon(Icons.chat_bubble_outline),
-                      label: const Text('Poser une question sur ce service'),
+                  Row(children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _ask,
+                        icon: const Icon(Icons.chat_bubble_outline),
+                        label: const Text('Discuter de ce service'),
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      onPressed: _call,
+                      icon: const Icon(Icons.call),
+                      label: const Text('Appeler'),
+                    ),
+                  ]),
                 ],
               ),
             ),
@@ -238,7 +265,9 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                 ? Icons.request_quote_outlined
                 : Icons.add_shopping_cart_rounded),
             label: Text(!item.canOrder
-                ? (item.isFull ? 'Complet' : 'Indisponible')
+                ? (item.isFull
+                    ? (item.isTraining ? 'Formation complète' : 'Complet')
+                    : 'Indisponible')
                 : item.onQuote
                     ? 'Demander un devis'
                     : item.isTraining

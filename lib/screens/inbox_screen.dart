@@ -28,7 +28,7 @@ class InboxScreen extends StatefulWidget {
 
 class _InboxScreenState extends State<InboxScreen> {
   late final Stream<List<InboxItem>> _items = widget.staff
-      ? Db.staffInbox(shopId: widget.shopId)
+      ? Db.staffInbox(shopId: widget.shopId, uid: widget.uid)
       : Db.clientInbox(widget.uid);
 
   @override
@@ -128,7 +128,7 @@ class _InboxBellState extends State<InboxBell> {
     if (_items == null || key != _key) {
       _key = key;
       _items = widget.staff
-          ? Db.staffInbox(shopId: widget.shopId)
+          ? Db.staffInbox(shopId: widget.shopId, uid: widget.uid)
           : Db.clientInbox(widget.uid);
     }
     return _items!;

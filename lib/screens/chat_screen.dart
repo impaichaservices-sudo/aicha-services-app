@@ -11,8 +11,10 @@ import '../config.dart';
 import '../models/app_user.dart';
 import '../models/catalog_item.dart';
 import '../models/chat.dart';
+import '../services/call_service.dart';
 import '../services/db.dart';
 import '../services/file_service.dart';
+import '../services/mic.dart';
 import '../services/session.dart';
 import '../utils.dart';
 import '../widgets/item_card.dart';
@@ -63,6 +65,10 @@ class _ChatScreenState extends State<ChatScreen> {
   DateTime _recStart = DateTime.now();
   Timer? _recTimer;
   static const _maxRecord = Duration(minutes: 3);
+  // Aperçu du vocal avant envoi (écouter / supprimer / envoyer)
+  String _previewPath = '';
+  Duration _previewLen = Duration.zero;
+  bool _previewPlaying = false;
 
   @override
   void initState() {
@@ -74,6 +80,12 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _recTimer?.cancel();
     if (_recording) AichaMedia.stop();
+    if (_previewPath.isNotEmpty) {
+      try {
+        final f = File(_previewPath);
+        if (f.existsSync()) f.deleteSync();
+      } catch (_) {}
+    }
     AichaMedia.stopPlay();
     _text.dispose();
     _scroll.dispose();
@@ -87,8 +99,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }) async {
     final body = (text ?? _text.text).trim();
     if (type == 'text' && body.isEmpty) return;
-    setState(() => _sending = true);
+    if (type == 'text') _text.clear();
+    final messenger = ScaffoldMessenger.of(context);
     try {
+      // Hors connexion, le message s'affiche avec 🕓 et part tout seul ensuite.
       await Db.sendMessage(
         conversationId: widget.conversationId,
         createIfMissing: widget.createIfMissing,
@@ -101,15 +115,12 @@ class _ChatScreenState extends State<ChatScreen> {
         type: type,
         itemId: item?.id ?? '',
         itemName: item?.name ?? '',
+        agentName: widget.me.name,
       );
-      if (type == 'text') _text.clear();
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Envoi impossible : $e')));
-      }
-    } finally {
-      if (mounted) setState(() => _sending = false);
+      if (type == 'text' && _text.text.isEmpty) _text.text = body;
+      messenger.showSnackBar(SnackBar(
+          content: Text('Message non envoyé. Vérifiez votre connexion Internet. (${_err(e)})')));
     }
   }
 
@@ -149,6 +160,7 @@ class _ChatScreenState extends State<ChatScreen> {
         type: 'file',
         fileUrl: up.url,
         fileName: up.name,
+        agentName: widget.me.name,
       );
       await Db.addFile({
         'ownerId': widget.me.uid,
@@ -200,9 +212,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _startRecording() async {
     final messenger = ScaffoldMessenger.of(context);
     try {
-      if (!await AichaMedia.askMic()) {
-        messenger.showSnackBar(const SnackBar(
-            content: Text('Autorisez le micro, puis appuyez à nouveau sur 🎤')));
+      if (!await ensureMic(context, usage: 'enregistrer un message vocal')) {
         return;
       }
       final dir = await getTemporaryDirectory();
@@ -226,21 +236,35 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _stopRecording({required bool send}) async {
+  /// mode : 'send' (envoyer tout de suite), 'preview' (écouter avant),
+  /// 'cancel' (supprimer).
+  Future<void> _stopRecording({required bool send, bool preview = false}) async {
     if (!_recording) return;
     _recTimer?.cancel();
     final length = DateTime.now().difference(_recStart);
     setState(() => _recording = false);
     final ok = await AichaMedia.stop();
     final file = File(_recPath);
-    if (!send || !ok || length < const Duration(seconds: 1)) {
+    if ((!send && !preview) || !ok || length < const Duration(seconds: 1)) {
       if (await file.exists()) await file.delete();
-      if (send && mounted) {
+      if ((send || preview) && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('Message trop court : appuyez sur 🎤 et parlez.')));
       }
       return;
     }
+    if (preview) {
+      setState(() {
+        _previewPath = _recPath;
+        _previewLen = length;
+      });
+      return;
+    }
+    await _sendVoice(_recPath, length);
+  }
+
+  Future<void> _sendVoice(String path, Duration length) async {
+    final file = File(path);
     await _sendUpload(() async {
       final bytes = await file.readAsBytes();
       final up = await FileService.uploadBytes(
@@ -252,6 +276,33 @@ class _ChatScreenState extends State<ChatScreen> {
       if (await file.exists()) await file.delete();
       return up;
     }, label: '🎤 Message vocal (${_dur(length)})');
+  }
+
+  Future<void> _togglePreview() async {
+    if (_previewPlaying) {
+      await AichaMedia.stopPlay();
+      return;
+    }
+    await AichaMedia.play(_previewPath, onDone: () {
+      if (mounted) setState(() => _previewPlaying = false);
+    });
+    setState(() => _previewPlaying = true);
+  }
+
+  Future<void> _closePreview({required bool send}) async {
+    final path = _previewPath;
+    final len = _previewLen;
+    await AichaMedia.stopPlay();
+    setState(() {
+      _previewPath = '';
+      _previewPlaying = false;
+    });
+    if (send) {
+      await _sendVoice(path, len);
+    } else {
+      final f = File(path);
+      if (await f.exists()) await f.delete();
+    }
   }
 
   Future<void> _openFile(ChatMessage m) async {
@@ -303,6 +354,15 @@ class _ChatScreenState extends State<ChatScreen> {
           child: SingleChildScrollView(
            child: Column(mainAxisSize: MainAxisSize.min, children: [
             if (filesOn) ..._mediaTiles(ctx),
+            ListTile(
+              leading: const Icon(Icons.forward_to_inbox, color: AppConfig.green),
+              title: const Text('Transférer la discussion'),
+              subtitle: const Text('À un collègue ou au superviseur'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _transfer();
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.design_services, color: AppConfig.green),
               title: const Text('Proposer un service'),
@@ -359,6 +419,84 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
     );
+  }
+
+  /// Appel audio par internet.
+  void _startCall() {
+    final session = sessionOf(context, listen: false);
+    CallService.openCall(
+      context,
+      conversationId: widget.conversationId,
+      createIfMissing: widget.createIfMissing,
+      asShop: widget.asShop,
+      shopId: widget.shopId,
+      otherName: widget.asShop ? widget.title : session.teamName(widget.shopId),
+      me: widget.me,
+    );
+  }
+
+  /// Transférer la discussion à un collègue ou au superviseur.
+  Future<void> _transfer() async {
+    final session = sessionOf(context, listen: false);
+    final team = await Db.allStaff(shopId: widget.shopId).first;
+    if (!mounted) return;
+    final targets = <MapEntry<String, String>>[
+      for (final m in team)
+        if (m.active && m.uid != widget.me.uid)
+          MapEntry(m.uid,
+              '${m.name} (${m.role == 'manager' ? 'Responsable' : 'Agent'})'),
+      if (!session.isSuper && AppConfig.adminUids.isNotEmpty)
+        MapEntry(AppConfig.adminUids.first, 'Superviseur (Super Admin)'),
+    ];
+    final picked = await showModalBottomSheet<MapEntry<String, String>>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text('Transférer la discussion à…',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+            ),
+            if (targets.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text('Aucun autre membre dans cette boutique.'),
+              ),
+            for (final t in targets)
+              ListTile(
+                leading: Icon(
+                    t.value.startsWith('Superviseur')
+                        ? Icons.admin_panel_settings
+                        : Icons.person,
+                    color: AppConfig.green),
+                title: Text(t.value),
+                onTap: () => Navigator.pop(ctx, t),
+              ),
+          ]),
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final nav = Navigator.of(context);
+    final toName = picked.value.split(' (').first;
+    try {
+      await Db.transferConversation(
+        conversationId: widget.conversationId,
+        toUid: picked.key,
+        toName: toName,
+        byUid: widget.me.uid,
+        byName: widget.me.name,
+        teamName: session.teamName(widget.shopId),
+      );
+      messenger.showSnackBar(
+          SnackBar(content: Text('Discussion transférée à $toName ✅')));
+      if (session.agentUid != null) nav.pop(); // l'agent n'y a plus accès
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Transfert impossible : ${_err(e)}')));
+    }
   }
 
   Future<void> _pickService() async {
@@ -420,6 +558,25 @@ class _ChatScreenState extends State<ChatScreen> {
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 0,
+        actions: [
+          if (widget.asShop)
+            IconButton(
+              tooltip: 'Transférer',
+              onPressed: _transfer,
+              icon: const Icon(Icons.forward_to_inbox, color: AppConfig.green),
+            ),
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 38),
+                  padding: const EdgeInsets.symmetric(horizontal: 12)),
+              onPressed: _startCall,
+              icon: const Icon(Icons.call, size: 18),
+              label: const Text('Appeler'),
+            ),
+          ),
+        ],
         title: Row(children: [
           CircleAvatar(
             backgroundColor: AppConfig.paleGreen,
@@ -483,7 +640,11 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Container(
             padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
             color: Colors.white,
-            child: _recording ? _recordBar() : _inputBar(),
+            child: _recording
+                ? _recordBar()
+                : _previewPath.isNotEmpty
+                    ? _previewBar()
+                    : _inputBar(),
           ),
         ),
       ]),
@@ -494,15 +655,20 @@ class _ChatScreenState extends State<ChatScreen> {
     final d = DateTime.now().difference(_recStart);
     return Row(children: [
       IconButton(
-        tooltip: 'Annuler',
+        tooltip: 'Supprimer',
         onPressed: () => _stopRecording(send: false),
         icon: const Icon(Icons.delete_outline, color: Colors.red),
       ),
       const Icon(Icons.fiber_manual_record, color: Colors.red, size: 16),
       const SizedBox(width: 6),
       Expanded(
-        child: Text('Enregistrement… ${_dur(d)}',
+        child: Text('Enregistrement… ${_dur(d)} / 3:00',
             style: const TextStyle(fontWeight: FontWeight.w700)),
+      ),
+      IconButton(
+        tooltip: 'Arrêter et écouter',
+        onPressed: () => _stopRecording(send: false, preview: true),
+        icon: const Icon(Icons.stop_circle_outlined, color: AppConfig.green, size: 30),
       ),
       IconButton.filled(
         tooltip: 'Envoyer',
@@ -512,13 +678,39 @@ class _ChatScreenState extends State<ChatScreen> {
     ]);
   }
 
-  Widget _inputBar() {
+  Widget _previewBar() {
     return Row(children: [
       IconButton(
-        onPressed: _sending ? null : _attach,
-        icon: Icon(widget.asShop ? Icons.add_circle_outline : Icons.attach_file,
-            color: AppConfig.green),
+        tooltip: 'Supprimer',
+        onPressed: () => _closePreview(send: false),
+        icon: const Icon(Icons.delete_outline, color: Colors.red),
       ),
+      IconButton(
+        tooltip: _previewPlaying ? 'Arrêter' : 'Écouter',
+        onPressed: _togglePreview,
+        icon: Icon(_previewPlaying ? Icons.stop_circle : Icons.play_circle_fill,
+            color: AppConfig.green, size: 34),
+      ),
+      Expanded(
+        child: Text('Message vocal • ${_dur(_previewLen)}',
+            style: const TextStyle(fontWeight: FontWeight.w700)),
+      ),
+      IconButton.filled(
+        tooltip: 'Envoyer',
+        onPressed: _sending ? null : () => _closePreview(send: true),
+        icon: const Icon(Icons.send_rounded),
+      ),
+    ]);
+  }
+
+  Widget _inputBar() {
+    return Row(children: [
+      if (widget.asShop)
+        IconButton(
+          tooltip: 'Plus d\'actions',
+          onPressed: _sending ? null : _attach,
+          icon: const Icon(Icons.add_circle_outline, color: AppConfig.green),
+        ),
       Expanded(
         child: TextField(
           controller: _text,
@@ -526,7 +718,7 @@ class _ChatScreenState extends State<ChatScreen> {
           maxLines: 5,
           textCapitalization: TextCapitalization.sentences,
           decoration: InputDecoration(
-            hintText: 'Votre message…',
+            hintText: 'Écrire un message…',
             isDense: true,
             fillColor: const Color(0xFFF2F4F0),
             border: OutlineInputBorder(
@@ -536,7 +728,12 @@ class _ChatScreenState extends State<ChatScreen> {
                 borderRadius: BorderRadius.circular(24),
                 borderSide: BorderSide.none),
             contentPadding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                const EdgeInsets.fromLTRB(16, 12, 4, 12),
+            suffixIcon: IconButton(
+              tooltip: 'Photo, vidéo, document',
+              onPressed: _sending ? null : _attach,
+              icon: const Icon(Icons.attach_file, color: AppConfig.green),
+            ),
           ),
         ),
       ),
@@ -558,6 +755,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   icon: const Icon(Icons.mic),
                 )
               : IconButton.filled(
+                  tooltip: 'Envoyer',
                   onPressed: () => _send(),
                   icon: const Icon(Icons.send_rounded),
                 ),
@@ -646,9 +844,17 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
             if (m.type == 'file' && m.fileName.isNotEmpty) _fileContent(m, fg, mine),
             const SizedBox(height: 2),
-            Text(timeLabel(m.createdAt),
-                style: TextStyle(
-                    fontSize: 10.5, color: mine ? Colors.white70 : Colors.black45)),
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Text(timeLabel(m.createdAt),
+                  style: TextStyle(
+                      fontSize: 10.5, color: mine ? Colors.white70 : Colors.black45)),
+              if (mine) ...[
+                const SizedBox(width: 4),
+                Icon(m.pending ? Icons.schedule : Icons.done_all,
+                    size: 13, color: Colors.white70,
+                    semanticLabel: m.pending ? 'En attente d\'envoi' : 'Envoyé'),
+              ],
+            ]),
           ],
         ),
       ),
@@ -759,6 +965,20 @@ class VoiceMessage extends StatefulWidget {
 class _VoiceMessageState extends State<VoiceMessage> {
   bool _playing = false;
   bool _loading = false;
+  int _pos = 0; // ms
+  int _len = 0; // ms
+  Timer? _tick;
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  void _stopTick() {
+    _tick?.cancel();
+    _tick = null;
+  }
 
   Future<void> _toggle() async {
     if (_playing) {
@@ -769,10 +989,32 @@ class _VoiceMessageState extends State<VoiceMessage> {
     setState(() => _loading = true);
     try {
       final path = await FileService.localPath(widget.url, widget.name);
-      await AichaMedia.play(path, onDone: () {
-        if (mounted) setState(() => _playing = false);
+      final d = await AichaMedia.play(path, onDone: () {
+        _stopTick();
+        if (mounted) setState(() {
+          _playing = false;
+          _pos = 0;
+        });
       });
-      if (mounted) setState(() => _playing = true);
+      if (!mounted) return;
+      setState(() {
+        _playing = true;
+        _len = d;
+        _pos = 0;
+      });
+      _tick = Timer.periodic(const Duration(milliseconds: 250), (_) async {
+        if (!mounted || !_playing) {
+          _stopTick();
+          return;
+        }
+        final (p, l) = await AichaMedia.position();
+        if (mounted && _playing) {
+          setState(() {
+            _pos = p;
+            if (l > 0) _len = l;
+          });
+        }
+      });
     } catch (e) {
       messenger.showSnackBar(SnackBar(
           content: Text('Lecture impossible : '
@@ -782,35 +1024,65 @@ class _VoiceMessageState extends State<VoiceMessage> {
     }
   }
 
+  String _fmt(int ms) {
+    final s = (ms / 1000).round();
+    return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final label = widget.label.replaceFirst('🎤 ', '');
-    return Row(mainAxisSize: MainAxisSize.min, children: [
-      SizedBox(
-        width: 44,
-        height: 44,
-        child: _loading
-            ? Padding(
-                padding: const EdgeInsets.all(10),
-                child: CircularProgressIndicator(
-                    strokeWidth: 2.5, color: widget.color),
-              )
-            : IconButton(
-                padding: EdgeInsets.zero,
-                onPressed: _toggle,
-                icon: Icon(
-                    _playing ? Icons.stop_circle : Icons.play_circle_fill,
-                    color: widget.color,
-                    size: 40),
+    return SizedBox(
+      width: 230,
+      child: Row(children: [
+        SizedBox(
+          width: 44,
+          height: 44,
+          child: _loading
+              ? Padding(
+                  padding: const EdgeInsets.all(10),
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2.5, color: widget.color),
+                )
+              : IconButton(
+                  padding: EdgeInsets.zero,
+                  tooltip: _playing ? 'Arrêter' : 'Écouter',
+                  onPressed: _toggle,
+                  icon: Icon(
+                      _playing ? Icons.stop_circle : Icons.play_circle_fill,
+                      color: widget.color,
+                      size: 40),
+                ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: _len > 0 ? (_pos / _len).clamp(0.0, 1.0) : 0,
+                  minHeight: 4,
+                  color: widget.color,
+                  backgroundColor: widget.color.withOpacity(0.25),
+                ),
               ),
-      ),
-      const SizedBox(width: 6),
-      Flexible(
-        child: Text(label.isEmpty ? 'Message vocal' : label,
-            style: TextStyle(color: widget.color, fontWeight: FontWeight.w600)),
-      ),
-      const SizedBox(width: 4),
-      Icon(Icons.mic, color: widget.color, size: 18),
-    ]);
+              const SizedBox(height: 4),
+              Text(
+                _playing
+                    ? '${_fmt(_pos)} / ${_fmt(_len)}'
+                    : (label.isEmpty ? 'Message vocal' : label),
+                style: TextStyle(
+                    color: widget.color, fontWeight: FontWeight.w600, fontSize: 12.5),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 4),
+        Icon(Icons.mic, color: widget.color, size: 18),
+      ]),
+    );
   }
 }

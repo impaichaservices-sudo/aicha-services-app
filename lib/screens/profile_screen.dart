@@ -6,6 +6,7 @@ import '../config.dart';
 import '../models/app_user.dart';
 import '../models/staff.dart';
 import '../services/auth_service.dart';
+import '../services/call_service.dart';
 import '../services/db.dart';
 import '../services/notify_service.dart';
 import '../services/session.dart';
@@ -68,6 +69,7 @@ class ProfileScreen extends StatelessWidget {
 
   Future<void> _signOut(BuildContext context, String uid) async {
     final notifier = context.read<SessionNotifier>();
+    CallService.stopWatching();
     await PushService.signOut(uid);
     notifier.clear();
     await AuthService.signOut();
@@ -114,6 +116,11 @@ class ProfileScreen extends StatelessWidget {
                               fontSize: 18, fontWeight: FontWeight.w800)),
                       Text(u?.phone ?? '',
                           style: const TextStyle(color: Colors.black54)),
+                      if (roleLabel == null && session.shops.isNotEmpty)
+                        Text('Client • ${shop.name}',
+                            style: const TextStyle(
+                                color: AppConfig.green,
+                                fontWeight: FontWeight.w700)),
                       if (roleLabel != null)
                         Text(roleLabel,
                             style: const TextStyle(
@@ -173,6 +180,23 @@ class ProfileScreen extends StatelessWidget {
                     title: Text(s.address),
                     subtitle: s.hours.isEmpty ? null : Text(s.hours),
                   ),
+                if (!session.canManage)
+                  _tile(Icons.wifi_calling_3_rounded,
+                      'Appeler ${AppConfig.shortName} par internet', () {
+                    final sid = session.clientShopId.isEmpty
+                        ? 'main'
+                        : session.clientShopId;
+                    CallService.openCall(
+                      context,
+                      conversationId: Db.generalConversationId(session.uid),
+                      createIfMissing:
+                          Db.generalConversationData(session.me, shopId: sid),
+                      asShop: false,
+                      shopId: sid,
+                      otherName: session.teamName(sid),
+                      me: session.me,
+                    );
+                  }),
                 if (s.phone.isNotEmpty)
                   _tile(Icons.call_rounded, 'Appeler : ${s.phone}',
                       () => launchUrl(Uri.parse('tel:${s.phone}'))),
@@ -182,10 +206,7 @@ class ProfileScreen extends StatelessWidget {
                           mode: LaunchMode.externalApplication)),
                 _tile(Icons.info_outline_rounded, 'À propos d\'${AppConfig.shortName}',
                     () => _about(context)),
-                _tile(Icons.system_update_rounded,
-                    'Rechercher une mise à jour'
-                    '${UpdateService.build > 0 ? ' (version ${UpdateService.build})' : ''}',
-                    () => UpdateService.checkNow(context)),
+                const UpdateTile(),
               ]);
             },
           ),

@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -7,6 +10,7 @@ import '../models/order.dart';
 import '../models/shop.dart';
 import '../services/auth_service.dart';
 import '../services/db.dart';
+import '../services/offline_queue.dart';
 import '../services/session.dart';
 import '../state/cart.dart';
 import '../utils.dart';
@@ -77,15 +81,39 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
 
     setState(() => _busy = true);
+    final orderId = Db.newOrderId();
+    final bookings = Map<String, int>.from(cart.bookings);
     try {
       final id = await Db.createOrder(order,
-          bookings: cart.bookings, shopCode: shop.code);
+              bookings: bookings, shopCode: shop.code, orderId: orderId)
+          .timeout(const Duration(seconds: 20));
       cart.clear();
       navigator.popUntil((r) => r.isFirst);
       navigator.push(MaterialPageRoute(
           builder: (_) => OrderDetailScreen(orderId: id, justCreated: true)));
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('Erreur : $e')));
+      final offline = e is TimeoutException ||
+          (e is FirebaseException &&
+              (e.code == 'unavailable' || e.code == 'deadline-exceeded'));
+      if (offline) {
+        // Pas de connexion : la commande est gardée et partira toute seule.
+        await OfflineQueue.addOrder(
+            orderId: orderId,
+            data: order.toNewMap(),
+            bookings: bookings,
+            shopCode: shop.code);
+        cart.clear();
+        navigator.popUntil((r) => r.isFirst);
+        messenger.showSnackBar(const SnackBar(
+          duration: Duration(seconds: 6),
+          content: Text('Votre commande n\'a pas pu être envoyée. Elle sera '
+              'synchronisée dès que la connexion sera rétablie.'),
+        ));
+      } else {
+        messenger.showSnackBar(SnackBar(
+            content: Text('Votre commande n\'a pas pu être envoyée : '
+                '${e.toString().replaceFirst('Exception: ', '')}')));
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }

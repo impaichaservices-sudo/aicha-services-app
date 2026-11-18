@@ -31,11 +31,12 @@ class _AdminScreenState extends State<AdminScreen> {
   Stream<List<Conversation>>? _convs;
   Stream<List<AppUser>>? _users;
 
-  void _ensureStreams(String? scope, bool isSuper) {
+  void _ensureStreams(String? scope, bool isSuper, String? agentUid) {
     if (_orders != null && scope == _scope) return;
     _scope = scope;
     _orders = Db.allOrders(shopId: scope);
-    _convs = Db.allConversations(shopId: scope);
+    _convs = Db.allConversations(shopId: scope, agentUid: agentUid);
+    if (agentUid == null) Db.backfillAssignment(scope);
     _users = isSuper ? Db.allUsers() : null;
   }
 
@@ -49,7 +50,7 @@ class _AdminScreenState extends State<AdminScreen> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     final scope = s.managedShopId;
-    _ensureStreams(scope, s.isSuper);
+    _ensureStreams(scope, s.isSuper, s.agentUid);
     final me = s.me;
     final title = s.isSuper
         ? 'ADMINISTRATION AÏCHA SERVICES'

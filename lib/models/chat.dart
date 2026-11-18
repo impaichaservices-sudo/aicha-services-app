@@ -16,6 +16,8 @@ class Conversation {
   final DateTime? lastAt;
   final int unreadForClient;
   final int unreadForShop;
+  final String assignedTo; // agent responsable ('' = pas encore attribuée)
+  final String assignedName;
 
   const Conversation({
     required this.id,
@@ -30,6 +32,8 @@ class Conversation {
     required this.lastAt,
     required this.unreadForClient,
     required this.unreadForShop,
+    this.assignedTo = '',
+    this.assignedName = '',
   });
 
   bool get isOrder => orderId.isNotEmpty;
@@ -49,6 +53,8 @@ class Conversation {
       lastAt: (d['lastAt'] as Timestamp?)?.toDate(),
       unreadForClient: (d['unreadForClient'] as num?)?.toInt() ?? 0,
       unreadForShop: (d['unreadForShop'] as num?)?.toInt() ?? 0,
+      assignedTo: (d['assignedTo'] ?? '') as String,
+      assignedName: (d['assignedName'] ?? '') as String,
     );
   }
 }
@@ -67,6 +73,7 @@ class ChatMessage {
   final String fileUrl;
   final String fileName;
   final DateTime? createdAt;
+  final bool pending; // pas encore parti (hors connexion)
 
   const ChatMessage({
     required this.id,
@@ -80,6 +87,7 @@ class ChatMessage {
     required this.fileUrl,
     required this.fileName,
     required this.createdAt,
+    this.pending = false,
   });
 
   bool get fromShop => senderRole == 'shop';
@@ -97,7 +105,8 @@ class ChatMessage {
       itemName: (d['itemName'] ?? '') as String,
       fileUrl: (d['fileUrl'] ?? '') as String,
       fileName: (d['fileName'] ?? '') as String,
-      createdAt: (d['createdAt'] as Timestamp?)?.toDate(),
+      createdAt: (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      pending: doc.metadata.hasPendingWrites,
     );
   }
 }

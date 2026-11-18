@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:aicha_media/aicha_media.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -15,6 +16,27 @@ import '../screens/order_detail_screen.dart';
 import '../widgets/item_card.dart';
 import 'db.dart';
 import 'session.dart';
+
+/// Message reçu quand l'application est fermée ou en arrière-plan.
+/// Appel entrant : notification plein écran avec sonnerie (s'affiche aussi
+/// sur l'écran verrouillé) qui ouvre l'application sur l'appel.
+@pragma('vm:entry-point')
+Future<void> firebaseBackgroundHandler(RemoteMessage m) async {
+  if (m.data['type'] == 'incoming_call') {
+    final name = (m.data['callerName'] ?? '').toString();
+    try {
+      await AichaMedia.showIncomingCall(
+        (m.data['callId'] ?? '').toString(),
+        'Appel vocal${name.isEmpty ? '' : ' — $name'}',
+        'Aïcha Services • touchez pour répondre',
+      );
+    } catch (_) {}
+  } else if (m.data['type'] == 'call_ended') {
+    try {
+      await AichaMedia.cancelIncomingCall();
+    } catch (_) {}
+  }
+}
 
 /// Envoi des notifications push via le serveur gratuit (Cloudflare Worker),
 /// qui les transmet à Firebase Cloud Messaging.
@@ -86,6 +108,45 @@ class NotifyService {
       'body': body,
       'data': _strings({...data, 'audience': 'staff'}),
     });
+  }
+
+  /// Prévenir un seul membre de l'équipe (discussion attribuée / transférée).
+  static void toMember({
+    required String uid,
+    required String shopId,
+    required String title,
+    required String body,
+    Map<String, dynamic> data = const {},
+  }) {
+    if (uid.isEmpty) return;
+    Db.addInbox({
+      'audience': 'member',
+      'toUid': uid,
+      'shopId': shopId,
+      'fromUid': _me,
+      'title': title,
+      'body': body,
+      'data': _strings({...data, 'audience': 'staff'}),
+    }).catchError((_) {});
+    _post({
+      'action': 'to_user',
+      'uid': uid,
+      'kind': 'messages',
+      'title': title,
+      'body': body,
+      'data': _strings({...data, 'audience': 'staff'}),
+    });
+  }
+
+  /// Faire sonner le(s) téléphone(s) appelé(s), même application fermée.
+  /// Le serveur vérifie que l'appelant a le droit d'appeler.
+  static void incomingCall({required String callId}) {
+    _post({'action': 'incoming_call', 'callId': callId});
+  }
+
+  /// Arrêter la sonnerie chez les autres (appel pris, annulé ou terminé).
+  static void callEnded({required String callId}) {
+    _post({'action': 'call_ended', 'callId': callId});
   }
 
   /// Prévenir un client (kind : 'orders' ou 'messages', selon ses réglages).

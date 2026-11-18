@@ -21,6 +21,7 @@ dependencies:
   file_picker: ^8.1.2
   path_provider: ^2.1.4
   open_filex: ^4.5.0
+  flutter_webrtc: 0.12.0
   aicha_media:
     path: packages/aicha_media
 

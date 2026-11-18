@@ -1,4 +1,6 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -9,6 +11,7 @@ import 'nav.dart';
 import 'screens/auth_screen.dart';
 import 'screens/home_screen.dart';
 import 'services/auth_service.dart';
+import 'services/notify_service.dart';
 import 'services/session.dart';
 import 'state/cart.dart';
 import 'theme.dart';
@@ -20,6 +23,10 @@ Future<void> main() async {
     return;
   }
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  // Données gardées sur le téléphone : l'application marche sans connexion.
+  FirebaseFirestore.instance.settings =
+      const Settings(persistenceEnabled: true, cacheSizeBytes: 200 * 1024 * 1024);
+  FirebaseMessaging.onBackgroundMessage(firebaseBackgroundHandler);
   runApp(
     MultiProvider(
       providers: [

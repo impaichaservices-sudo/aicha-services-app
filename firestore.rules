@@ -49,8 +49,9 @@ service cloud.firestore {
     // Équipe : le Super Admin nomme tout le monde ; un responsable gère
     // uniquement les agents de sa boutique.
     match /staff/{uid} {
+      // Collègues de la même boutique visibles (pour transférer une discussion).
       allow read: if signedIn() && (
-        me() == uid || isSuper() || isManagerOf(resource.data.shopId));
+        me() == uid || isSuper() || isStaffOf(resource.data.shopId));
       allow create, update: if isSuper() || (
         isManagerOf(request.resource.data.shopId)
         && request.resource.data.role == 'agent'
@@ -118,8 +119,11 @@ service cloud.firestore {
     }
 
     match /orders/{id} {
+      // resource == null : vérifier qu'une commande renvoyée après une coupure
+      // n'a pas déjà été créée (pas de doublon).
       allow get: if signedIn() && (
-        resource.data.buyerId == me() || manages(resource.data.get('shopId', 'main')));
+        resource == null
+        || resource.data.buyerId == me() || manages(resource.data.get('shopId', 'main')));
       allow list: if signedIn() && (
         resource.data.buyerId == me() || manages(resource.data.shopId));
 
@@ -149,29 +153,44 @@ service cloud.firestore {
     }
 
     // ---------- Discussions ----------
+    // L'équipe voit une discussion : Super Admin, responsable de la boutique,
+    // ou agent à qui elle est attribuée (ou pas encore attribuée).
+    function staffSees(d) {
+      return isSuper()
+        || isManagerOf(d.get('shopId', 'main'))
+        || (isStaffOf(d.get('shopId', 'main'))
+            && d.get('assignedTo', '') in [me(), '']);
+    }
+
     match /conversations/{cid} {
       allow get: if signedIn() && (
         resource == null || resource.data.clientId == me()
-        || manages(resource.data.get('shopId', 'main')));
+        || staffSees(resource.data));
       allow list: if signedIn() && (
-        resource.data.clientId == me() || manages(resource.data.shopId));
+        resource.data.clientId == me()
+        || isSuper()
+        || isManagerOf(resource.data.shopId)
+        || (isStaffOf(resource.data.shopId)
+            && (resource.data.assignedTo == me() || resource.data.assignedTo == '')));
       allow create: if signedIn() && (
         request.resource.data.clientId == me()
         || manages(request.resource.data.shopId));
       allow update: if signedIn() && (
-        manages(resource.data.get('shopId', 'main'))
+        staffSees(resource.data)
         || (resource.data.clientId == me()
             && onlyChanges(['lastMessage', 'lastAt', 'unreadForShop',
-                            'unreadForClient', 'shopId'])));
+                            'unreadForClient', 'shopId', 'assignedTo', 'assignedName'])
+            && request.resource.data.get('assignedTo', '')
+                 == resource.data.get('assignedTo', '')));
       allow delete: if isSuper();
 
       match /messages/{mid} {
         allow read: if signedIn() && (
           !exists(conv(cid))
           || get(conv(cid)).data.clientId == me()
-          || manages(get(conv(cid)).data.get('shopId', 'main')));
+          || staffSees(get(conv(cid)).data));
         allow create: if signedIn() && (
-          (manages(getAfter(conv(cid)).data.get('shopId', 'main'))
+          (staffSees(getAfter(conv(cid)).data)
             && request.resource.data.senderRole == 'shop')
           || (getAfter(conv(cid)).data.clientId == me()
               && request.resource.data.senderId == me()
@@ -224,6 +243,30 @@ service cloud.firestore {
       allow create: if signedIn() && request.resource.data.fromUid == me();
       allow update: if false;
       allow delete: if isSuper();
+    }
+
+    // ---------- Appels par internet ----------
+    function callDoc(id) { return /databases/$(database)/documents/calls/$(id); }
+    match /calls/{id} {
+      allow get: if signedIn() && (
+        resource.data.clientId == me() || manages(resource.data.get('shopId', 'main')));
+      allow list: if signedIn() && (
+        resource.data.clientId == me() || manages(resource.data.shopId));
+      allow create: if signedIn()
+        && request.resource.data.callerId == me()
+        && request.resource.data.status == 'ringing'
+        && (request.resource.data.clientId == me()
+            || manages(request.resource.data.shopId));
+      allow update: if signedIn() && (
+        resource.data.clientId == me() || manages(resource.data.get('shopId', 'main')));
+      allow delete: if isSuper();
+
+      match /candidates/{c} {
+        allow read, create: if signedIn() && (
+          get(callDoc(id)).data.clientId == me()
+          || manages(get(callDoc(id)).data.get('shopId', 'main')));
+        allow update, delete: if false;
+      }
     }
 
     match /payments/{id} {

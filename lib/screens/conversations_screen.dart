@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../config.dart';
 import '../models/app_user.dart';
 import '../models/chat.dart';
+import '../services/call_service.dart';
 import '../services/db.dart';
 import '../services/session.dart';
 import '../utils.dart';
@@ -65,12 +66,38 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     ));
   }
 
+  /// Appeler l'équipe par internet (discussion générale).
+  void _callShop() {
+    CallService.openCall(
+      context,
+      conversationId: Db.generalConversationId(widget.uid),
+      createIfMissing: Db.generalConversationData(_me, shopId: _shopId),
+      asShop: false,
+      shopId: _shopId,
+      otherName: sessionOf(context, listen: false).teamName(_shopId),
+      me: _me,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Discussion'),
         automaticallyImplyLeading: widget.standalone,
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 38),
+                  padding: const EdgeInsets.symmetric(horizontal: 12)),
+              onPressed: _callShop,
+              icon: const Icon(Icons.call, size: 18),
+              label: const Text('Appeler'),
+            ),
+          ),
+        ],
       ),
       body: StreamBuilder<List<Conversation>>(
         stream: _convs,

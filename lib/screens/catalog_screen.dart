@@ -11,6 +11,7 @@ import '../widgets/common.dart';
 import '../widgets/item_card.dart';
 import '../widgets/product_image.dart';
 import 'cart_screen.dart';
+import 'custom_request_screen.dart';
 import 'inbox_screen.dart';
 import 'shop_picker_screen.dart';
 
@@ -109,6 +110,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 const SliverToBoxAdapter(child: SectionTitle('Tous nos services')),
                 _grid(all),
               ],
+              SliverToBoxAdapter(child: _customRequestCard()),
               const SliverToBoxAdapter(child: SizedBox(height: 24)),
             ],
           );
@@ -204,7 +206,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
             onChanged: (v) => setState(() => _query = v),
             textInputAction: TextInputAction.search,
             decoration: InputDecoration(
-              hintText: 'Rechercher un service...',
+              hintText: 'Que recherchez-vous ?',
               prefixIcon: const Icon(Icons.search),
               suffixIcon: _query.isEmpty
                   ? null
@@ -308,6 +310,27 @@ class _CatalogScreenState extends State<CatalogScreen> {
       },
     );
   }
+
+  /// « Vous ne trouvez pas votre besoin ? » → demande sur mesure.
+  Widget _customRequestCard() => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+        child: Card(
+          color: AppConfig.paleGreen,
+          child: ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            leading: const CircleAvatar(
+              backgroundColor: AppConfig.green,
+              child: Icon(Icons.edit_note_rounded, color: Colors.white),
+            ),
+            title: const Text('Vous ne trouvez pas votre besoin ?',
+                style: TextStyle(fontWeight: FontWeight.w800)),
+            subtitle: const Text('Demander un service personnalisé'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const CustomRequestScreen())),
+          ),
+        ),
+      );
 
   Widget _grid(List<CatalogItem> list) {
     if (list.isEmpty) {

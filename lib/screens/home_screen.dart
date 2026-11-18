@@ -8,7 +8,9 @@ import '../models/order.dart';
 import '../models/shop.dart';
 import '../models/shop_settings.dart';
 import '../models/staff.dart';
+import '../services/call_service.dart';
 import '../services/db.dart';
+import '../services/offline_queue.dart';
 import '../services/notify_service.dart';
 import '../services/update_service.dart';
 import '../services/session.dart';
@@ -73,6 +75,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   context.read<SessionNotifier>().set(session);
                   if (ready) PushService.sync(session);
                   if (ready) UpdateService.checkOnStart();
+                  if (ready) CallService.watch(session);
+                  if (ready) OfflineQueue.start();
                 });
                 return ready && session.needsShopChoice && !session.canManage
                     ? const ShopPickerScreen(firstTime: true)
@@ -88,7 +92,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _tabs(Session session) {
     final pages = <Widget>[
       CatalogScreen(onOpenChat: () => _goTo(2)),
-      OrdersScreen(uid: widget.uid, user: session.user),
+      OrdersScreen(uid: widget.uid, user: session.user, onExplore: () => _goTo(0)),
       ConversationsScreen(uid: widget.uid, user: session.user),
       ProfileScreen(onGoTo: _goTo),
       if (session.canManage) const AdminScreen(),
@@ -96,7 +100,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final index = _index < pages.length ? _index : 0;
     return Scaffold(
       body: IndexedStack(index: index, children: pages),
-      bottomNavigationBar: StreamBuilder<List<Conversation>>(
+      bottomNavigationBar: Column(mainAxisSize: MainAxisSize.min, children: [
+        const SyncBanner(),
+        StreamBuilder<List<Conversation>>(
         stream: _convs,
         builder: (context, cs) => StreamBuilder<List<InboxItem>>(
         stream: _inbox,
@@ -141,8 +147,10 @@ class _HomeScreenState extends State<HomeScreen> {
               if (session.canManage)
                 NavigationDestination(
                     icon: _StaffBadge(shopId: session.managedShopId,
+                        agentUid: session.agentUid,
                         child: const Icon(Icons.storefront_outlined)),
                     selectedIcon: _StaffBadge(shopId: session.managedShopId,
+                        agentUid: session.agentUid,
                         child: const Icon(Icons.storefront_rounded)),
                     label: 'Gestion'),
             ],
@@ -150,6 +158,7 @@ class _HomeScreenState extends State<HomeScreen> {
         },
       ),
       ),
+      ]),
     );
   }
 }
@@ -157,8 +166,10 @@ class _HomeScreenState extends State<HomeScreen> {
 /// Pastille de l'onglet Gestion : nouvelles commandes + messages non lus.
 class _StaffBadge extends StatefulWidget {
   final String? shopId;
+  final String? agentUid;
   final Widget child;
-  const _StaffBadge({required this.shopId, required this.child});
+  const _StaffBadge(
+      {required this.shopId, this.agentUid, required this.child});
 
   @override
   State<_StaffBadge> createState() => _StaffBadgeState();
@@ -167,14 +178,15 @@ class _StaffBadge extends StatefulWidget {
 class _StaffBadgeState extends State<_StaffBadge> {
   late Stream<List<ShopOrder>> _orders = Db.allOrders(shopId: widget.shopId);
   late Stream<List<Conversation>> _convs =
-      Db.allConversations(shopId: widget.shopId);
+      Db.allConversations(shopId: widget.shopId, agentUid: widget.agentUid);
 
   @override
   void didUpdateWidget(covariant _StaffBadge old) {
     super.didUpdateWidget(old);
-    if (old.shopId != widget.shopId) {
+    if (old.shopId != widget.shopId || old.agentUid != widget.agentUid) {
       _orders = Db.allOrders(shopId: widget.shopId);
-      _convs = Db.allConversations(shopId: widget.shopId);
+      _convs =
+          Db.allConversations(shopId: widget.shopId, agentUid: widget.agentUid);
     }
   }
 

@@ -18,6 +18,10 @@ class AichaMedia {
     });
   }
 
+  /// true si le micro est déjà autorisé (sans rien demander).
+  static Future<bool> hasMic() async =>
+      (await _ch.invokeMethod<bool>('hasMic')) ?? false;
+
   /// true si le micro est autorisé ; sinon la demande est affichée.
   static Future<bool> askMic() async =>
       (await _ch.invokeMethod<bool>('askMic')) ?? false;
@@ -46,4 +50,28 @@ class AichaMedia {
     await _ch.invokeMethod('stopPlay');
     f?.call();
   }
+
+  /// Sonnerie du téléphone (appel entrant) + vibration.
+  static Future<void> ring() => _ch.invokeMethod('ring');
+  static Future<void> stopRing() => _ch.invokeMethod('stopRing');
+
+  /// Position de lecture du message vocal (ms) et durée totale (ms).
+  static Future<(int, int)> position() async {
+    final m = await _ch.invokeMapMethod<String, int>('position') ?? const {};
+    return (m['position'] ?? 0, m['duration'] ?? 0);
+  }
+
+  /// Ouvre les paramètres de l'application (autoriser le micro).
+  static Future<void> openSettings() => _ch.invokeMethod('openSettings');
+
+  /// Appel entrant application fermée : notification plein écran + sonnerie.
+  static Future<void> showIncomingCall(String callId, String title, String body) =>
+      _ch.invokeMethod('showIncomingCall',
+          {'callId': callId, 'title': title, 'body': body});
+
+  static Future<void> cancelIncomingCall() => _ch.invokeMethod('cancelIncomingCall');
+
+  /// Afficher l'application par-dessus l'écran verrouillé.
+  static Future<void> showOnLock(bool on) =>
+      _ch.invokeMethod('showOnLock', {'on': on});
 }

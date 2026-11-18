@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../config.dart';
@@ -12,6 +14,7 @@ import '../models/shop.dart';
 import '../models/shop_settings.dart';
 import '../models/staff.dart';
 import 'notify_service.dart';
+import 'offline_queue.dart';
 
 /// Accès à la base Firestore.
 /// Les tris se font dans l'application pour éviter de créer des index composites.
@@ -166,33 +169,85 @@ class Db {
   /// Crée la commande avec un numéro AS-00001, AS-00002… et réserve les
   /// places des formations, en une seule opération.
   static Future<String> createOrder(ShopOrder o,
-      {Map<String, int> bookings = const {}, String shopCode = ''}) async {
-    final counterRef = counterFor(o.shopId);
-    String number = '';
-    final id = await _fs.runTransaction<String>((tx) async {
+      {Map<String, int> bookings = const {},
+      String shopCode = '',
+      String orderId = ''}) async {
+    final id = orderId.isEmpty ? orders.doc().id : orderId;
+    await createOrderFromMap(
+        orderId: id, data: o.toNewMap(), bookings: bookings, shopCode: shopCode);
+    return id;
+  }
+
+  /// Identifiant d'une nouvelle commande (choisi avant l'envoi, pour pouvoir
+  /// la renvoyer sans doublon après une coupure).
+  static String newOrderId() => orders.doc().id;
+
+  /// Crée la commande (numéro AS-00001…). Si elle existe déjà (envoi déjà
+  /// passé avant une coupure), rien n'est recréé. Renvoie le numéro.
+  static Future<String> createOrderFromMap({
+    required String orderId,
+    required Map<String, dynamic> data,
+    Map<String, int> bookings = const {},
+    String shopCode = '',
+  }) async {
+    final shopId = (data['shopId'] ?? 'main').toString();
+    final counterRef = counterFor(shopId);
+    final orderRef = orders.doc(orderId);
+    var created = false;
+    final number = await _fs.runTransaction<String>((tx) async {
+      final existing = await tx.get(orderRef);
+      if (existing.exists) return (existing.data()?['number'] ?? '') as String;
       final counter = await tx.get(counterRef);
       final next = ((counter.data()?['next'] as num?)?.toInt() ?? 0) + 1;
-      final ref = orders.doc();
-      number = shopCode.isEmpty
+      final n = shopCode.isEmpty
           ? 'AS-${next.toString().padLeft(5, '0')}'
           : 'AS-$shopCode-${next.toString().padLeft(5, '0')}';
       tx.set(counterRef, {'next': next});
-      tx.set(ref, {
-        ...o.toNewMap(),
-        'number': number,
+      tx.set(orderRef, {
+        ...data,
+        'createdAt': FieldValue.serverTimestamp(),
+        'number': n,
       });
       for (final e in bookings.entries) {
         tx.update(catalog.doc(e.key), {'booked': FieldValue.increment(e.value)});
       }
-      return ref.id;
+      created = true;
+      return n;
     });
+    if (!created) return number;
+    final buyerName = (data['buyerName'] ?? 'Client').toString();
+    final items = ((data['items'] as List?) ?? const [])
+        .map((e) => (e as Map)['name']?.toString() ?? '')
+        .where((e) => e.isNotEmpty)
+        .join(', ');
     NotifyService.toStaff(
-      shopId: o.shopId,
+      shopId: shopId,
       title: 'Nouvelle commande $number',
-      body: '${o.buyerName} • ${o.itemsSummary}',
-      data: {'type': 'order', 'orderId': id},
+      body: '$buyerName • $items',
+      data: {'type': 'order', 'orderId': orderId},
     );
-    return id;
+    // Premier événement de la discussion de la commande
+    try {
+      await sendMessage(
+        conversationId: orderConversationId(orderId),
+        createIfMissing: {
+          'shopId': shopId,
+          'clientId': (data['buyerId'] ?? '').toString(),
+          'clientName': buyerName,
+          'clientPhone': (data['phone'] ?? '').toString(),
+          'orderId': orderId,
+          'orderNumber': number,
+          'title': 'Commande $number',
+        },
+        senderId: (data['buyerId'] ?? '').toString(),
+        senderRole: 'client',
+        senderName: buyerName,
+        text: '🧾 Commande $number créée. L\'équipe va la confirmer.',
+        type: 'system',
+        notify: false,
+      );
+    } catch (_) {}
+    return number;
   }
 
   /// Change le statut et prévient le client dans la discussion de la commande.
@@ -204,16 +259,20 @@ class Db {
     });
     final msg = orderStatusMessages[status];
     if (msg != null && senderId.isNotEmpty) {
-      await sendMessage(
-        conversationId: orderConversationId(o.id),
-        createIfMissing: orderConversationData(o),
-        senderId: senderId,
-        senderRole: 'shop',
-        senderName: senderName,
-        text: 'Commande ${o.displayNumber} : $msg',
-        type: 'system',
-        notify: false,
-      );
+      try {
+        await sendMessage(
+          conversationId: orderConversationId(o.id),
+          createIfMissing: orderConversationData(o),
+          senderId: senderId,
+          senderRole: 'shop',
+          senderName: senderName,
+          text: 'Commande ${o.displayNumber} : $msg',
+          type: 'system',
+          notify: false,
+        );
+      } catch (_) {
+        // discussion attribuée à un autre agent : le client est quand même prévenu
+      }
       NotifyService.toUser(
         uid: o.buyerId,
         kind: 'orders',
@@ -267,7 +326,24 @@ class Db {
           s.docs.map(Conversation.fromDoc).toList()
             ..sort((a, b) => _newestFirst(a.lastAt, b.lastAt)));
 
-  static Stream<List<Conversation>> allConversations({String? shopId}) {
+  static Stream<List<Conversation>> allConversations(
+      {String? shopId, String? agentUid}) {
+    if (agentUid != null) {
+      // Agent : ses discussions + les nouvelles pas encore attribuées.
+      final base = conversations.where('shopId', isEqualTo: shopId ?? 'main');
+      final mine = base.where('assignedTo', isEqualTo: agentUid).snapshots();
+      final free = base.where('assignedTo', isEqualTo: '').snapshots();
+      return _merge2(mine, free).map((pair) {
+        final map = <String, Conversation>{};
+        for (final s in pair) {
+          for (final d in s.docs) {
+            map[d.id] = Conversation.fromDoc(d);
+          }
+        }
+        return map.values.toList()
+          ..sort((a, b) => _newestFirst(a.lastAt, b.lastAt));
+      });
+    }
     if (shopId != null) {
       return conversations.where('shopId', isEqualTo: shopId).snapshots().map(
           (s) => s.docs.map(Conversation.fromDoc).toList()
@@ -291,8 +367,91 @@ class Db {
           .collection('messages')
           .orderBy('createdAt')
           .limitToLast(300)
-          .snapshots()
+          .snapshots(includeMetadataChanges: true)
           .map((s) => s.docs.map(ChatMessage.fromDoc).toList());
+
+  /// Combine deux flux : renvoie les deux derniers résultats ensemble.
+  static Stream<List<QuerySnapshot<Map<String, dynamic>>>> _merge2(
+      Stream<QuerySnapshot<Map<String, dynamic>>> a,
+      Stream<QuerySnapshot<Map<String, dynamic>>> b) {
+    late StreamController<List<QuerySnapshot<Map<String, dynamic>>>> c;
+    QuerySnapshot<Map<String, dynamic>>? la, lb;
+    StreamSubscription? sa, sb;
+    void emit() {
+      if (la != null && lb != null) c.add([la!, lb!]);
+    }
+
+    c = StreamController(
+      onListen: () {
+        sa = a.listen((v) {
+          la = v;
+          emit();
+        }, onError: c.addError);
+        sb = b.listen((v) {
+          lb = v;
+          emit();
+        }, onError: c.addError);
+      },
+      onCancel: () async {
+        await sa?.cancel();
+        await sb?.cancel();
+      },
+    );
+    return c.stream;
+  }
+
+  /// Ajoute le champ « attribuée à » aux anciennes discussions (responsable).
+  static Future<void> backfillAssignment(String? shopId) async {
+    try {
+      Query<Map<String, dynamic>> q = conversations;
+      if (shopId != null) q = q.where('shopId', isEqualTo: shopId);
+      final snap = await q.get();
+      final batch = _fs.batch();
+      var n = 0;
+      for (final d in snap.docs) {
+        if (!d.data().containsKey('assignedTo')) {
+          batch.update(d.reference, {'assignedTo': '', 'assignedName': ''});
+          n++;
+          if (n >= 450) break;
+        }
+      }
+      if (n > 0) await batch.commit();
+    } catch (_) {}
+  }
+
+  /// Transférer une discussion à un autre membre de l'équipe.
+  static Future<void> transferConversation({
+    required String conversationId,
+    required String toUid,
+    required String toName,
+    required String byUid,
+    required String byName,
+    required String teamName,
+  }) async {
+    final ref = conversations.doc(conversationId);
+    final data = (await ref.get()).data() ?? {};
+    // 1. Trace dans la discussion (pendant qu'on y a encore accès)
+    await sendMessage(
+      conversationId: conversationId,
+      createIfMissing: const {},
+      senderId: byUid,
+      senderRole: 'shop',
+      senderName: teamName,
+      text: '🔁 Discussion transférée à $toName par $byName',
+      type: 'system',
+      notify: false,
+    );
+    // 2. Nouveau responsable
+    await ref.update({'assignedTo': toUid, 'assignedName': toName});
+    // 3. Prévenir la personne
+    NotifyService.toMember(
+      uid: toUid,
+      shopId: (data['shopId'] ?? 'main').toString(),
+      title: 'Discussion transférée par $byName',
+      body: '${data['clientName'] ?? 'Client'} : ${data['lastMessage'] ?? ''}',
+      data: {'type': 'chat', 'conversationId': conversationId},
+    );
+  }
 
   /// Envoie un message ; crée la conversation si besoin (même opération).
   static Future<void> sendMessage({
@@ -308,11 +467,23 @@ class Db {
     String fileUrl = '',
     String fileName = '',
     bool notify = true,
+    String agentName = '', // nom de l'agent (équipe) pour l'attribution
   }) async {
     final convRef = conversations.doc(conversationId);
-    final convSnap = await convRef.get();
-    final exists = convSnap.exists;
-    final convData = convSnap.data() ?? createIfMissing;
+    // Sans connexion : on lit la copie gardée sur le téléphone.
+    DocumentSnapshot<Map<String, dynamic>>? convSnap;
+    try {
+      convSnap = await convRef.get().timeout(const Duration(seconds: 6));
+    } catch (_) {
+      try {
+        convSnap = await convRef.get(const GetOptions(source: Source.cache));
+      } catch (_) {
+        convSnap = null; // inconnu : on fusionnera sans écraser
+      }
+    }
+    final unknown = convSnap == null;
+    final exists = convSnap?.exists ?? false;
+    final convData = convSnap?.data() ?? createIfMissing;
     final batch = _fs.batch();
     final preview = type == 'service'
         ? 'Service proposé : $itemName'
@@ -325,10 +496,26 @@ class Db {
       if (senderRole == 'client') 'unreadForShop': FieldValue.increment(1),
       if (senderRole == 'shop') 'unreadForClient': FieldValue.increment(1),
     };
-    if (exists) {
+    final assigned = (convData['assignedTo'] ?? '').toString();
+    if (senderRole == 'shop' && type != 'system' && assigned.isEmpty) {
+      // Le premier membre de l'équipe qui répond prend la discussion.
+      convUpdate['assignedTo'] = senderId;
+      convUpdate['assignedName'] = agentName.isEmpty ? senderName : agentName;
+    } else if (exists && !convData.containsKey('assignedTo')) {
+      convUpdate['assignedTo'] = '';
+      convUpdate['assignedName'] = '';
+    }
+    if (unknown) {
+      // État inconnu (hors connexion, jamais ouverte) : fusion prudente.
+      convUpdate.remove('assignedTo');
+      convUpdate.remove('assignedName');
+      batch.set(convRef, {...createIfMissing, ...convUpdate}, SetOptions(merge: true));
+    } else if (exists) {
       batch.update(convRef, convUpdate);
     } else {
       batch.set(convRef, {
+        'assignedTo': '',
+        'assignedName': '',
         ...createIfMissing,
         'unreadForClient': 0,
         'unreadForShop': 0,
@@ -348,12 +535,39 @@ class Db {
       'fileName': fileName,
       'createdAt': FieldValue.serverTimestamp(),
     });
-    await batch.commit();
+    // L'envoi part dès que la connexion est là ; on n'attend pas plus de 8 s.
+    final commit = batch.commit();
+    SyncStatus.trackWrite(commit);
+    var sent = true;
+    try {
+      await commit.timeout(const Duration(seconds: 8));
+    } on TimeoutException {
+      sent = false; // en attente de synchronisation
+    }
     if (!notify) return;
+    if (!sent) {
+      commit.then((_) => _notifyMessage(convData, conversationId, senderRole,
+          senderName, preview, assigned)).catchError((_) {});
+      return;
+    }
+    _notifyMessage(
+        convData, conversationId, senderRole, senderName, preview, assigned);
+  }
+
+  static void _notifyMessage(Map<String, dynamic> convData, String conversationId,
+      String senderRole, String senderName, String preview, String assigned) {
     final shopId = (convData['shopId'] ?? 'main').toString();
     final orderId = (convData['orderId'] ?? '').toString();
     final notifData = {'type': 'chat', 'conversationId': conversationId};
-    if (senderRole == 'client') {
+    if (senderRole == 'client' && assigned.isNotEmpty) {
+      NotifyService.toMember(
+        uid: assigned,
+        shopId: shopId,
+        title: 'Nouveau message de $senderName',
+        body: preview,
+        data: notifData,
+      );
+    } else if (senderRole == 'client') {
       NotifyService.toStaff(
         shopId: shopId,
         title: 'Nouveau message de $senderName',
@@ -399,15 +613,34 @@ class Db {
   static Stream<List<InboxItem>> clientInbox(String uid) => inbox
       .where('toUid', isEqualTo: uid)
       .snapshots()
-      .map((s) => s.docs.map(InboxItem.fromDoc).toList()
+      .map((s) => s.docs
+          .map(InboxItem.fromDoc)
+          .where((i) => i.audience != 'member')
+          .toList()
         ..sort((a, b) => _newestFirst(a.createdAt, b.createdAt)));
 
   /// Notifications de l'équipe : une boutique, ou toutes (Super Admin).
-  static Stream<List<InboxItem>> staffInbox({String? shopId}) {
+  static Stream<List<InboxItem>> staffInbox({String? shopId, String? uid}) {
     Query<Map<String, dynamic>> q = inbox.where('audience', isEqualTo: 'staff');
     if (shopId != null) q = q.where('shopId', isEqualTo: shopId);
-    return q.snapshots().map((s) => s.docs.map(InboxItem.fromDoc).toList()
-      ..sort((a, b) => _newestFirst(a.createdAt, b.createdAt)));
+    if (uid == null) {
+      return q.snapshots().map((s) => s.docs.map(InboxItem.fromDoc).toList()
+        ..sort((a, b) => _newestFirst(a.createdAt, b.createdAt)));
+    }
+    // + les notifications adressées personnellement (discussions attribuées)
+    final mine = inbox.where('toUid', isEqualTo: uid).snapshots();
+    return _merge2(q.snapshots(), mine).map((pair) {
+      final map = <String, InboxItem>{};
+      for (final s in pair) {
+        for (final d in s.docs) {
+          final it = InboxItem.fromDoc(d);
+          if (identical(s, pair[1]) && it.audience != 'member') continue;
+          map[d.id] = it;
+        }
+      }
+      return map.values.toList()
+        ..sort((a, b) => _newestFirst(a.createdAt, b.createdAt));
+    });
   }
 
   /// Marque comme vus (field : inboxSeenAt, ordersSeenAt ou staffSeenAt).

@@ -5,6 +5,8 @@ import '../models/app_user.dart';
 import '../models/order.dart';
 import '../services/auth_service.dart';
 import '../services/db.dart';
+import '../services/session.dart';
+import '../services/call_service.dart';
 import '../utils.dart';
 import '../widgets/common.dart';
 import 'chat_screen.dart';
@@ -33,6 +35,22 @@ class OrderDetailScreen extends StatelessWidget {
         orderId: o.id,
       ),
     ));
+  }
+
+  Future<void> _call(BuildContext context, ShopOrder o) async {
+    final uid = AuthService.current!.uid;
+    final me = await Db.userStream(uid).first ??
+        AppUser(uid: uid, name: o.buyerName, phone: o.phone, email: '');
+    if (!context.mounted) return;
+    CallService.openCall(
+      context,
+      conversationId: Db.orderConversationId(o.id),
+      createIfMissing: Db.orderConversationData(o),
+      asShop: false,
+      shopId: o.shopId,
+      otherName: sessionOf(context, listen: false).teamName(o.shopId),
+      me: me,
+    );
   }
 
   Future<void> _cancel(BuildContext context, ShopOrder o) async {
@@ -117,6 +135,12 @@ class OrderDetailScreen extends StatelessWidget {
                       onPressed: () => _openChat(context, o),
                       icon: const Icon(Icons.chat_bubble_rounded),
                       label: const Text('Discuter de cette commande'),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: () => _call(context, o),
+                      icon: const Icon(Icons.call),
+                      label: const Text('Appeler l\'équipe par Internet'),
                     ),
                     const SizedBox(height: 12),
                     Card(

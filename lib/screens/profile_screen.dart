@@ -9,6 +9,7 @@ import '../services/auth_service.dart';
 import '../services/db.dart';
 import '../services/notify_service.dart';
 import '../services/session.dart';
+import '../services/update_service.dart';
 import '../utils.dart';
 import 'my_files_screen.dart';
 import 'orders_screen.dart';
@@ -181,6 +182,10 @@ class ProfileScreen extends StatelessWidget {
                           mode: LaunchMode.externalApplication)),
                 _tile(Icons.info_outline_rounded, 'À propos d\'${AppConfig.shortName}',
                     () => _about(context)),
+                _tile(Icons.system_update_rounded,
+                    'Rechercher une mise à jour'
+                    '${UpdateService.build > 0 ? ' (version ${UpdateService.build})' : ''}',
+                    () => UpdateService.checkNow(context)),
               ]);
             },
           ),

@@ -10,6 +10,7 @@ import '../models/shop_settings.dart';
 import '../models/staff.dart';
 import '../services/db.dart';
 import '../services/notify_service.dart';
+import '../services/update_service.dart';
 import '../services/session.dart';
 import 'admin/admin_screen.dart';
 import 'catalog_screen.dart';
@@ -71,6 +72,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   if (!mounted) return;
                   context.read<SessionNotifier>().set(session);
                   if (ready) PushService.sync(session);
+                  if (ready) UpdateService.checkOnStart();
                 });
                 return ready && session.needsShopChoice && !session.canManage
                     ? const ShopPickerScreen(firstTime: true)

@@ -1,4 +1,4 @@
-name: Construire l'APK
+Construire l'APK
 
 on:
   push:
@@ -31,6 +31,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: Clé de signature fixe (mises à jour sans désinstaller)
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE" ]; then
+            mkdir -p ~/.android
+            echo "$ANDROID_KEYSTORE" | base64 -d > ~/.android/debug.keystore
+          fi
 
       - uses: subosito/flutter-action@v2
         with:
@@ -66,6 +75,8 @@ jobs:
       - name: Compiler l'APK
         run: >
           flutter build apk --release
+          --build-number=${{ github.run_number }}
+          --dart-define=BUILD_NUMBER=${{ github.run_number }}
           --dart-define=FIREBASE_API_KEY=${{ secrets.FIREBASE_API_KEY }}
           --dart-define=FIREBASE_APP_ID=${{ secrets.FIREBASE_APP_ID }}
           --dart-define=FIREBASE_SENDER_ID=${{ secrets.FIREBASE_SENDER_ID }}
@@ -76,3 +87,12 @@ jobs:
         with:
           name: aicha-services-apk
           path: build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Publier la mise à jour pour les clients
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk aicha-services.apk
+          gh release create "v${{ github.run_number }}" aicha-services.apk \
+            --title "Version ${{ github.run_number }}" \
+            --notes "Mise à jour de l'application Aïcha Services" --latest

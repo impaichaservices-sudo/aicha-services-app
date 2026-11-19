@@ -65,7 +65,7 @@ class _AdminConversationsScreenState extends State<AdminConversationsScreen> {
       body: StreamBuilder<List<Conversation>>(
         stream: _convs,
         builder: (context, snap) {
-          if (snap.hasError) return Center(child: Text('Erreur : ${snap.error}'));
+          if (snap.hasError) return Center(child: Text(friendlyError(snap.error), textAlign: TextAlign.center));
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
           final me = widget.me.uid;
           final list = snap.data!.where((c) {

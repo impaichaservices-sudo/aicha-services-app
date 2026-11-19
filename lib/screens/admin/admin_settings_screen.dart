@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../../utils.dart';
+import '../../widgets/backup_admins.dart';
 import 'package:flutter/services.dart';
 
 import '../../models/shop.dart';
@@ -97,7 +99,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       }
       messenger.showSnackBar(const SnackBar(content: Text('Réglages enregistrés')));
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('Erreur : $e')));
+      messenger.showSnackBar(SnackBar(content: Text(friendlyError(e))));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -164,6 +166,8 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                         prefixIcon: Icon(Icons.delivery_dining)),
                   ),
                   if (_global) ...[
+                    _title('Super Admins de secours'),
+                    const BackupAdmins(),
                     _title('Notifications (serveur Cloudflare)'),
                     TextFormField(
                       controller: _notify,

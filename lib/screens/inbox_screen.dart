@@ -57,7 +57,7 @@ class _InboxScreenState extends State<InboxScreen> {
       body: StreamBuilder<List<InboxItem>>(
         stream: _items,
         builder: (context, snap) {
-          if (snap.hasError) return Center(child: Text('Erreur : ${snap.error}'));
+          if (snap.hasError) return Center(child: Text(friendlyError(snap.error), textAlign: TextAlign.center));
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
           final list = snap.data!.take(100).toList();
           if (list.isEmpty) {

@@ -33,7 +33,7 @@ class MyFilesScreen extends StatelessWidget {
       body: StreamBuilder<List<FileRecord>>(
         stream: Db.myFiles(uid),
         builder: (context, snap) {
-          if (snap.hasError) return Center(child: Text('Erreur : ${snap.error}'));
+          if (snap.hasError) return Center(child: Text(friendlyError(snap.error), textAlign: TextAlign.center));
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
           final list = snap.data!;
           if (list.isEmpty) {
@@ -63,7 +63,7 @@ class MyFilesScreen extends StatelessWidget {
                       await FileService.open(f.url, f.name);
                     } catch (e) {
                       messenger.showSnackBar(SnackBar(
-                          content: Text(e.toString().replaceFirst('Exception: ', ''))));
+                          content: Text(friendlyError(e))));
                     }
                   },
                 ),

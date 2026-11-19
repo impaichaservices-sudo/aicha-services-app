@@ -319,6 +319,14 @@ public class AichaMediaPlugin implements FlutterPlugin, ActivityAware,
                 result.success(isOnline());
                 break;
             }
+            case "abis": {
+                java.util.ArrayList<String> l = new java.util.ArrayList<>();
+                if (Build.VERSION.SDK_INT >= 21) {
+                    for (String a : Build.SUPPORTED_ABIS) l.add(a);
+                }
+                result.success(l);
+                break;
+            }
             case "hasMic": {
                 result.success(micGranted());
                 break;

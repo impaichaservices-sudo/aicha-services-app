@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:aicha_media/aicha_media.dart';
 import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
@@ -17,8 +18,17 @@ class UpdateService {
   /// Numéro de cette version (fourni lors de la compilation).
   static const build = int.fromEnvironment('BUILD_NUMBER', defaultValue: 0);
   static const _repo = 'impaichaservices-sudo/aicha-services-app';
-  static const _apkUrl =
-      'https://github.com/$_repo/releases/latest/download/aicha-services.apk';
+  static const _base = 'https://github.com/$_repo/releases/latest/download/';
+
+  /// APK adapté au téléphone : les anciens téléphones (32 bits) reçoivent
+  /// leur propre version, plus légère et compatible.
+  static Future<String> apkUrl() async {
+    final abis = await AichaMedia.abis();
+    if (abis.isNotEmpty && !abis.contains('arm64-v8a') && abis.contains('armeabi-v7a')) {
+      return '${_base}aicha-services-arm32.apk';
+    }
+    return '${_base}aicha-services.apk';
+  }
 
   /// Dernier numéro connu (null = pas encore vérifié).
   static final latestKnown = ValueNotifier<int?>(null);
@@ -187,7 +197,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
       if (!await file.exists()) {
         _client = http.Client();
         final res = await _client!
-            .send(http.Request('GET', Uri.parse(UpdateService._apkUrl)))
+            .send(http.Request('GET', Uri.parse(await UpdateService.apkUrl())))
             .timeout(const Duration(seconds: 30));
         if (res.statusCode != 200) {
           throw Exception('serveur indisponible (${res.statusCode})');

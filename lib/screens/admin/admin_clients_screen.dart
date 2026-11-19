@@ -46,7 +46,7 @@ class _AdminClientsScreenState extends State<AdminClientsScreen> {
           child: StreamBuilder<List<AppUser>>(
             stream: _users,
             builder: (context, snap) {
-              if (snap.hasError) return Center(child: Text('Erreur : ${snap.error}'));
+              if (snap.hasError) return Center(child: Text(friendlyError(snap.error), textAlign: TextAlign.center));
               if (!snap.hasData) {
                 return const Center(child: CircularProgressIndicator());
               }

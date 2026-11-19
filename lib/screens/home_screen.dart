@@ -43,6 +43,7 @@ class _HomeScreenState extends State<HomeScreen> {
   late final Stream<List<Conversation>> _convs =
       Db.clientConversations(widget.uid);
   late final Stream<List<InboxItem>> _inbox = Db.clientInbox(widget.uid);
+  bool _cleaned = false;
 
   void _goTo(int i) {
     setState(() => _index = i);
@@ -81,6 +82,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   if (ready) CallService.watch(session);
                   if (ready) OfflineQueue.start();
                   BadgeService.start();
+                  if (ready && !_cleaned) {
+                    _cleaned = true;
+                    Db.cleanOldInbox(widget.uid);
+                  }
                 });
                 return ready && session.needsShopChoice && !session.canManage
                     ? const ShopPickerScreen(firstTime: true)

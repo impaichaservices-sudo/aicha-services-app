@@ -24,6 +24,16 @@ class AichaMedia {
   }
 
   /// true si le micro est déjà autorisé (sans rien demander).
+  /// Types de processeur du téléphone (ex. arm64-v8a, armeabi-v7a).
+  static Future<List<String>> abis() async {
+    try {
+      final l = await _ch.invokeMethod<List<dynamic>>('abis');
+      return (l ?? const []).map((e) => '$e').toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
   static Future<bool> hasMic() async =>
       (await _ch.invokeMethod<bool>('hasMic')) ?? false;
 

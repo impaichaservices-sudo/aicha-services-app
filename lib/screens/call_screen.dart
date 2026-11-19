@@ -13,6 +13,7 @@ class CallScreen extends StatefulWidget {
   final String myUid;
   final String myName;
   final String personName;
+  final bool teamCall; // appel d'un client vers l'équipe (plusieurs téléphones sonnent)
   // Appel sortant
   final Future<ActiveCall> Function()? startCall;
   // Appel entrant
@@ -25,7 +26,8 @@ class CallScreen extends StatefulWidget {
     required this.myName,
     required Future<ActiveCall> Function() this.startCall,
   })  : callId = '',
-        personName = '';
+        personName = '',
+        teamCall = false;
 
   const CallScreen.incoming({
     super.key,
@@ -34,6 +36,7 @@ class CallScreen extends StatefulWidget {
     required this.myUid,
     required this.myName,
     this.personName = '',
+    this.teamCall = false,
   }) : startCall = null;
 
   bool get isIncoming => startCall == null;
@@ -61,6 +64,9 @@ class _CallScreenState extends State<CallScreen> {
       _incomingSub = CallService.calls.doc(widget.callId).snapshots().listen((d) {
         final s = d.data()?['status'];
         if (_waitingAnswer && !_answering && s != null && s != 'ringing') {
+          // Un collègue a décroché (ou l'appelant a raccroché) : on arrête
+          // seulement la sonnerie ici, sans rien envoyer.
+          _waitingAnswer = false;
           AichaMedia.stopRing();
           _close(s == 'accepted' ? 'Un collègue a répondu' : 'Appel manqué');
         }
@@ -175,6 +181,14 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _decline() async {
     _waitingAnswer = false;
+    if (widget.teamCall) {
+      // Appel adressé à toute l'équipe : seule ma sonnerie s'arrête,
+      // l'appel continue de sonner chez mes collègues.
+      await AichaMedia.stopRing();
+      AichaMedia.cancelIncomingCall().catchError((_) {});
+      _close('Vous avez ignoré cet appel');
+      return;
+    }
     await CallService.decline(widget.callId);
     _close('Appel refusé');
   }
@@ -187,7 +201,7 @@ class _CallScreenState extends State<CallScreen> {
     AichaMedia.stopRing();
     if (_toneOn) AichaMedia.stopTone().catchError((_) {});
     AichaMedia.showOnLock(false).catchError((_) {});
-    if (_waitingAnswer) CallService.decline(widget.callId);
+    if (_waitingAnswer && !widget.teamCall) CallService.decline(widget.callId);
     final c = _call;
     if (c != null && c.state.value != CallState.ended) c.hangUp();
     super.dispose();

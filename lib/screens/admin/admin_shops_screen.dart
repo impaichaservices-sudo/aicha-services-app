@@ -33,7 +33,7 @@ class _AdminShopsScreenState extends State<AdminShopsScreen> {
       body: StreamBuilder<List<Shop>>(
         stream: _shops,
         builder: (context, snap) {
-          if (snap.hasError) return Center(child: Text('Erreur : ${snap.error}'));
+          if (snap.hasError) return Center(child: Text(friendlyError(snap.error), textAlign: TextAlign.center));
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
           final list = snap.data!;
           if (list.isEmpty) {
@@ -133,7 +133,7 @@ class _ShopFormScreenState extends State<ShopFormScreen> {
       navigator.pop();
       messenger.showSnackBar(const SnackBar(content: Text('Boutique enregistrée')));
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('Erreur : $e')));
+      messenger.showSnackBar(SnackBar(content: Text(friendlyError(e))));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

@@ -55,3 +55,24 @@ String greetUser(String name) {
   final f = firstName(name);
   return f.isEmpty ? greeting() : '${greeting()} $f';
 }
+
+/// Message d'erreur compréhensible (au lieu du texte technique).
+String friendlyError(Object? e) {
+  final t = '$e'.toLowerCase();
+  if (t.contains('permission-denied') || t.contains('permission_denied')) {
+    return 'Action non autorisée pour votre compte.';
+  }
+  if (t.contains('unavailable') || t.contains('network') || t.contains('socket') ||
+      t.contains('timeout') || t.contains('deadline')) {
+    return 'Pas de connexion internet. Réessayez dans un instant.';
+  }
+  if (t.contains('failed-precondition') || t.contains('index')) {
+    return 'Liste en préparation, réessayez dans quelques minutes.';
+  }
+  if (t.contains('not-found')) return 'Élément introuvable (peut-être supprimé).';
+  if (t.contains('15 mo') || t.contains('trop lourd')) return 'Fichier trop lourd (15 Mo maximum).';
+  if (t.contains('exception: ')) {
+    return '$e'.replaceFirst(RegExp(r'^.*?Exception: '), '');
+  }
+  return 'Une erreur est survenue. Réessayez.';
+}

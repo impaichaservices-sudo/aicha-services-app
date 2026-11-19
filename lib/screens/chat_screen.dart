@@ -633,7 +633,7 @@ class _ChatScreenState extends State<ChatScreen> {
             stream: _messages,
             builder: (context, snap) {
               if (snap.hasError) {
-                return Center(child: Text('Erreur : ${snap.error}'));
+                return Center(child: Text(friendlyError(snap.error), textAlign: TextAlign.center));
               }
               final list = snap.data ?? const <ChatMessage>[];
               _onNewMessages(list);

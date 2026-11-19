@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils.dart';
 
 import '../models/app_user.dart';
 import '../models/order.dart';
@@ -92,7 +93,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
             stream: _orders,
             builder: (context, snap) {
               if (snap.hasError) {
-                return Center(child: Text('Erreur : ${snap.error}'));
+                return Center(child: Text(friendlyError(snap.error), textAlign: TextAlign.center));
               }
               if (!snap.hasData) {
                 return const Center(child: CircularProgressIndicator());

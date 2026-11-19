@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../utils.dart';
 
 import '../../config.dart';
 import '../../models/app_user.dart';
@@ -41,7 +42,7 @@ class _AdminTeamScreenState extends State<AdminTeamScreen> {
       body: StreamBuilder<List<StaffMember>>(
         stream: _staff,
         builder: (context, snap) {
-          if (snap.hasError) return Center(child: Text('Erreur : ${snap.error}'));
+          if (snap.hasError) return Center(child: Text(friendlyError(snap.error), textAlign: TextAlign.center));
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
           final list = snap.data!;
           return ListView(
@@ -144,7 +145,7 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
         }
       });
     } catch (e) {
-      setState(() => _error = 'Erreur : $e');
+      setState(() => _error = friendlyError(e));
     } finally {
       if (mounted) setState(() => _searching = false);
     }
@@ -174,7 +175,7 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
       navigator.pop();
       messenger.showSnackBar(const SnackBar(content: Text('Membre enregistré')));
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('Erreur : $e')));
+      messenger.showSnackBar(SnackBar(content: Text(friendlyError(e))));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

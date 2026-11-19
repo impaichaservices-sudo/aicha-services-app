@@ -11,6 +11,7 @@ import '../../services/session.dart';
 import '../../utils.dart';
 import '../../widgets/common.dart';
 import '../../widgets/order_card.dart';
+import '../../widgets/price_check.dart';
 import '../../services/notify_service.dart';
 import '../chat_screen.dart';
 
@@ -132,7 +133,7 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
             stream: _orders,
             builder: (context, snap) {
               if (snap.hasError) {
-                return Center(child: Text('Erreur : ${snap.error}'));
+                return Center(child: Text(friendlyError(snap.error), textAlign: TextAlign.center));
               }
               if (!snap.hasData) {
                 return const Center(child: CircularProgressIndicator());
@@ -185,7 +186,7 @@ class AdminOrderDetailScreen extends StatelessWidget {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Erreur : $e')));
+            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     }
   }
@@ -393,6 +394,7 @@ class AdminOrderDetailScreen extends StatelessWidget {
                         ),
                       ),
                     const SizedBox(height: 12),
+                    PriceCheck(order: o),
                     Card(
                       child: Padding(
                         padding: const EdgeInsets.all(16),

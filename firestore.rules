@@ -27,6 +27,9 @@ service cloud.firestore {
         || get(staffPath()).data.get('perms', {}).get(perm, false) == true);
     }
     function manages(shopId) { return isSuper() || isStaffOf(shopId); }
+    function isManager() {
+      return isStaff() && get(staffPath()).data.role == 'manager';
+    }
     function onlyChanges(keys) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
@@ -35,14 +38,21 @@ service cloud.firestore {
     }
 
     // ---------- Comptes ----------
+    // Super Admins (le Super Admin principal peut nommer un compte de secours).
     match /admins/{uid} {
-      allow read: if signedIn() && me() == uid;
-      allow write: if false;
+      allow read: if signedIn() && (me() == uid || isSuper());
+      allow create, delete: if isSuper();
+      allow update: if false;
     }
 
-    // Profils : chacun le sien ; l'équipe peut consulter les clients.
+    // Profils : un agent ne voit que les clients de SA boutique ;
+    // un responsable peut chercher un numéro (pour ajouter un agent).
     match /users/{uid} {
-      allow read: if signedIn() && (me() == uid || isSuper() || isStaff());
+      allow get: if signedIn() && (
+        me() == uid || isSuper() || isManager()
+        || isStaffOf(resource.data.get('shopId', 'main')));
+      allow list: if signedIn() && (
+        isSuper() || isManager() || isStaffOf(resource.data.shopId));
       allow create, update: if signedIn() && me() == uid;
     }
 
@@ -83,12 +93,18 @@ service cloud.firestore {
         || (canIn(resource.data.get('shopId', 'main'), 'catalog')
             && request.resource.data.shopId == resource.data.get('shopId', 'main'))
         // Un client peut seulement réserver des places de formation.
+        // Un client réserve des places UNIQUEMENT en créant sa commande
+        // (même opération) : impossible de bloquer une formation sans commander.
         || (signedIn()
-            && onlyChanges(['booked'])
+            && onlyChanges(['booked', 'lastOrderId'])
             && request.resource.data.booked is int
             && request.resource.data.booked > resource.data.get('booked', 0)
+            && request.resource.data.booked - resource.data.get('booked', 0) <= 50
             && (resource.data.get('places', 0) == 0
-                || request.resource.data.booked <= resource.data.places));
+                || request.resource.data.booked <= resource.data.places)
+            && !exists(/databases/$(database)/documents/orders/$(request.resource.data.lastOrderId))
+            && getAfter(/databases/$(database)/documents/orders/$(request.resource.data.lastOrderId))
+                 .data.buyerId == me());
       allow delete: if isSuper() || canIn(resource.data.get('shopId', 'main'), 'catalog');
     }
 
@@ -133,6 +149,12 @@ service cloud.firestore {
         && request.resource.data.status == 'nouvelle'
         && request.resource.data.paymentStatus == 'en_attente'
         && request.resource.data.total is int
+        && request.resource.data.subtotal is int
+        && request.resource.data.deliveryFee is int
+        && request.resource.data.subtotal >= 0
+        && request.resource.data.deliveryFee >= 0
+        && request.resource.data.total
+             == request.resource.data.subtotal + request.resource.data.deliveryFee
         && request.resource.data.number is string
         && !('quotedTotal' in request.resource.data);
 
@@ -195,7 +217,8 @@ service cloud.firestore {
             && request.resource.data.senderRole == 'shop')
           || (getAfter(conv(cid)).data.clientId == me()
               && request.resource.data.senderId == me()
-              && request.resource.data.senderRole == 'client'));
+              && request.resource.data.senderRole == 'client'
+              && !('agentName' in request.resource.data)));
         allow update, delete: if false;
       }
     }
@@ -245,9 +268,17 @@ service cloud.firestore {
       allow list: if signedIn() && (
         resource.data.toUid == me()
         || (resource.data.audience == 'staff' && manages(resource.data.shopId)));
-      allow create: if signedIn() && request.resource.data.fromUid == me();
+      // Un client ne peut écrire QUE à l'équipe (jamais dans la cloche
+      // d'un autre client) : pas de fausses notifications.
+      allow create: if signedIn() && request.resource.data.fromUid == me()
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 150
+        && request.resource.data.body is string
+        && request.resource.data.body.size() <= 600
+        && (isSuper() || isStaff()
+            || request.resource.data.audience in ['staff', 'member']);
       allow update: if false;
-      allow delete: if isSuper();
+      allow delete: if isSuper() || (signedIn() && resource.data.get('toUid', '') == me());
     }
 
     // ---------- Appels par internet ----------

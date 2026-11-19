@@ -57,12 +57,38 @@ class Db {
       .snapshots()
       .map((d) => d.exists ? AppUser.fromDoc(d) : null);
 
-  static Stream<List<AppUser>> allUsers() => users.snapshots().map((s) =>
+  /// Nombre de comptes, sans télécharger toute la liste (économise le quota).
+  static Future<int> usersCount() async {
+    try {
+      final r = await users.count().get();
+      return r.count ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// Supprime les notifications de la cloche de plus de 30 jours.
+  static Future<void> cleanOldInbox(String uid) async {
+    try {
+      final limit = DateTime.now().subtract(const Duration(days: 30));
+      final all = await inbox.where('toUid', isEqualTo: uid).limit(300).get();
+      for (final d in all.docs) {
+        final at = d.data()['createdAt'];
+        if (at is Timestamp && at.toDate().isBefore(limit)) {
+          await d.reference.delete();
+        }
+      }
+    } catch (_) {}
+  }
+
+  static Stream<List<AppUser>> allUsers({int limit = 300}) =>
+      users.limit(limit).snapshots().map((s) =>
       s.docs.map(AppUser.fromDoc).toList()
         ..sort((a, b) => _newestFirst(a.createdAt, b.createdAt)));
 
-  static Stream<List<AppUser>> shopUsers(String shopId) => users
+  static Stream<List<AppUser>> shopUsers(String shopId, {int limit = 300}) => users
       .where('shopId', isEqualTo: shopId)
+      .limit(limit)
       .snapshots()
       .map((s) => s.docs.map(AppUser.fromDoc).toList()
         ..sort((a, b) => _newestFirst(a.createdAt, b.createdAt)));
@@ -235,7 +261,8 @@ class Db {
         'number': n,
       });
       for (final e in bookings.entries) {
-        tx.update(catalog.doc(e.key), {'booked': FieldValue.increment(e.value)});
+        tx.update(catalog.doc(e.key),
+            {'booked': FieldValue.increment(e.value), 'lastOrderId': orderId});
       }
       created = true;
       return n;
@@ -641,8 +668,20 @@ class Db {
       notifications.add({...data, 'createdAt': FieldValue.serverTimestamp()});
 
   // ---------------- Notifications dans l'application (cloche) ----------------
-  static Future<void> addInbox(Map<String, dynamic> data) =>
-      inbox.add({...data, 'createdAt': FieldValue.serverTimestamp()});
+  static Future<void> addInbox(Map<String, dynamic> data) async {
+    String cut(Object? v, int n) {
+      final t = '${v ?? ''}';
+      return t.length <= n ? t : '${t.substring(0, n - 1)}…';
+    }
+    try {
+      await inbox.add({
+        ...data,
+        'title': cut(data['title'], 150),
+        'body': cut(data['body'], 600),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {}
+  }
 
   static Stream<List<InboxItem>> clientInbox(String uid) => inbox
       .where('toUid', isEqualTo: uid)

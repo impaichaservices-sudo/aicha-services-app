@@ -151,6 +151,7 @@ class CallService {
         myUid: myUid,
         myName: myName,
         personName: personName,
+        teamCall: data['callerRole'] == 'client',
       ),
     ));
   }
@@ -330,8 +331,14 @@ class CallService {
     await AichaMedia.stopRing();
     AichaMedia.cancelIncomingCall().catchError((_) {});
     try {
-      await calls.doc(callId).update({'status': 'declined'});
-      NotifyService.callEnded(callId: callId);
+      // Refus seulement si personne n'a encore décroché.
+      final ok = await _fs.runTransaction<bool>((t) async {
+        final d = await t.get(calls.doc(callId));
+        if (d.data()?['status'] != 'ringing') return false;
+        t.update(calls.doc(callId), {'status': 'declined'});
+        return true;
+      });
+      if (ok) NotifyService.callEnded(callId: callId);
     } catch (_) {}
   }
 

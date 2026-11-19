@@ -31,7 +31,7 @@ class _AdminScreenState extends State<AdminScreen> {
   String? _scope; // boutique gérée (null = toutes)
   Stream<List<ShopOrder>>? _orders;
   Stream<List<Conversation>>? _convs;
-  Stream<List<AppUser>>? _users;
+  Future<int>? _users;
 
   void _ensureStreams(String? scope, bool isSuper, String? agentUid) {
     if (_orders != null && scope == _scope) return;
@@ -39,7 +39,7 @@ class _AdminScreenState extends State<AdminScreen> {
     _orders = Db.allOrders(shopId: scope);
     _convs = Db.allConversations(shopId: scope, agentUid: agentUid);
     if (agentUid == null) Db.backfillAssignment(scope);
-    _users = isSuper ? Db.allUsers() : null;
+    _users = isSuper ? Db.usersCount() : null;
   }
 
   void _push(Widget w) =>
@@ -110,8 +110,8 @@ class _AdminScreenState extends State<AdminScreen> {
                       style: const TextStyle(color: Colors.black54)),
                   const SizedBox(height: 16),
                   if (s.isSuper)
-                    StreamBuilder<List<AppUser>>(
-                      stream: _users,
+                    FutureBuilder<int>(
+                      future: _users,
                       builder: (context, us) => _grid([
                         _stat('Boutiques actives', s.shops.length,
                             Icons.storefront_rounded, AppConfig.green,
@@ -119,7 +119,7 @@ class _AdminScreenState extends State<AdminScreen> {
                         _stat('Commandes aujourd\'hui', today,
                             Icons.today_rounded, const Color(0xFF1565C0),
                             () => _push(AdminOrdersScreen(me: me, shopId: scope))),
-                        _stat('Clients', us.data?.length ?? 0,
+                        _stat('Clients', us.data ?? 0,
                             Icons.people_alt_rounded, const Color(0xFF00838F),
                             () => _push(AdminClientsScreen(me: me, shopId: scope))),
                         _stat('Messages non lus', unread,

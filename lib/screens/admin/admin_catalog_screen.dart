@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../utils.dart';
 
 import '../../config.dart';
 import '../../models/catalog_item.dart';
@@ -43,7 +44,7 @@ class _AdminCatalogScreenState extends State<AdminCatalogScreen> {
       body: StreamBuilder<List<CatalogItem>>(
         stream: _items,
         builder: (context, snap) {
-          if (snap.hasError) return Center(child: Text('Erreur : ${snap.error}'));
+          if (snap.hasError) return Center(child: Text(friendlyError(snap.error), textAlign: TextAlign.center));
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
           final list = snap.data!
               .where((i) => widget.shopId == null || i.availableIn(widget.shopId!))

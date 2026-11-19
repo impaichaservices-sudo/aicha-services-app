@@ -53,7 +53,7 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
       body: StreamBuilder<List<Promotion>>(
         stream: _promos,
         builder: (context, snap) {
-          if (snap.hasError) return Center(child: Text('Erreur : ${snap.error}'));
+          if (snap.hasError) return Center(child: Text(friendlyError(snap.error), textAlign: TextAlign.center));
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
           final list = snap.data!
               .where((p) => widget.shopId == null || p.visibleIn(widget.shopId!))
@@ -242,7 +242,7 @@ class _PromotionFormScreenState extends State<PromotionFormScreen> {
       navigator.pop();
       messenger.showSnackBar(const SnackBar(content: Text('Offre enregistrée')));
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('Erreur : $e')));
+      messenger.showSnackBar(SnackBar(content: Text(friendlyError(e))));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

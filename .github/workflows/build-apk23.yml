@@ -1,0 +1,59 @@
+name: Construire l'APK
+
+# Fichier volontairement minimal : toute la compilation est dans ci/build.sh,
+# qui arrive avec le zip du code.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer le code (décompresser le .zip)
+        run: |
+          shopt -s nullglob
+          zips=(*.zip)
+          if [ ${#zips[@]} -gt 0 ]; then
+            for z in "${zips[@]}"; do unzip -o -q "$z" -x '.github/*'; git rm -q "$z"; done
+            git config user.name "github-actions"
+            git config user.email "github-actions@users.noreply.github.com"
+            git add -A
+            git commit -q -m "Installation du code de l'application"
+            git push
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: stable
+          cache: true
+
+      - name: Compiler et publier (script ci/build.sh)
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
+          FIREBASE_SENDER_ID: ${{ secrets.FIREBASE_SENDER_ID }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
+        run: bash ci/build.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aicha-services-apk
+          path: aicha-services*.apk

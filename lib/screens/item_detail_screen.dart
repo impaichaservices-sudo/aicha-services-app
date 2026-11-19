@@ -60,7 +60,8 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
         asShop: false,
         me: user,
         shopId: shopId,
-        initialText: 'Bonjour, je voudrais des informations sur : ${item.name}',
+        aboutItem: item,
+        initialText: 'Bonjour, je voudrais des informations sur cet article.',
       ),
     ));
   }

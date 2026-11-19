@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:aicha_media/aicha_media.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
@@ -150,9 +151,74 @@ class OfflineQueue {
   }
 }
 
-/// Bandeau « Synchronisation en attente » / « Synchronisé ».
-class SyncBanner extends StatelessWidget {
+/// Bandeau en bas de l'écran : connexion Internet et synchronisation.
+///  - rouge « Pas de connexion Internet » quand le réseau est coupé ;
+///  - orange « Synchronisation en attente » tant que des envois attendent ;
+///  - vert « Connexion rétablie » / « Synchronisé » pendant 3 s.
+class SyncBanner extends StatefulWidget {
   const SyncBanner({super.key});
+
+  @override
+  State<SyncBanner> createState() => _SyncBannerState();
+}
+
+class _SyncBannerState extends State<SyncBanner> {
+  static bool _watching = false;
+  bool _wasOffline = false;
+  bool _backOnline = false;
+  Timer? _t;
+
+  @override
+  void initState() {
+    super.initState();
+    if (!_watching) {
+      _watching = true;
+      AichaMedia.watchNetwork();
+    }
+    AichaMedia.online.addListener(_onNet);
+  }
+
+  void _onNet() {
+    final on = AichaMedia.online.value;
+    if (!on) {
+      _wasOffline = true;
+    } else if (_wasOffline) {
+      _wasOffline = false;
+      _backOnline = true;
+      _t?.cancel();
+      _t = Timer(const Duration(seconds: 3), () {
+        if (mounted) setState(() => _backOnline = false);
+      });
+      OfflineQueue.flush();
+    }
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _t?.cancel();
+    AichaMedia.online.removeListener(_onNet);
+    super.dispose();
+  }
+
+  Widget _bar(Color bg, Color fg, IconData icon, String text) => Material(
+        color: bg,
+        child: SizedBox(
+          width: double.infinity,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+            child: Row(children: [
+              Icon(icon, size: 18, color: fg),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(text,
+                    style: TextStyle(
+                        fontSize: 12.5, fontWeight: FontWeight.w700, color: fg)),
+              ),
+            ]),
+          ),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -161,31 +227,23 @@ class SyncBanner extends StatelessWidget {
       builder: (_, n, __) => ValueListenableBuilder<bool>(
         valueListenable: SyncStatus.justSynced,
         builder: (_, synced, __) {
-          if (n == 0 && !synced) return const SizedBox.shrink();
-          final waiting = n > 0;
-          return Material(
-            color: waiting ? const Color(0xFFFFF4E5) : const Color(0xFFEAF6E5),
-            child: SizedBox(
-              width: double.infinity,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                child: Row(children: [
-                  Icon(waiting ? Icons.cloud_upload_outlined : Icons.cloud_done_outlined,
-                      size: 18,
-                      color: waiting ? const Color(0xFFB26A00) : const Color(0xFF1E8B09)),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      waiting
-                          ? 'Synchronisation en attente ($n)… vérifiez votre connexion Internet.'
-                          : 'Synchronisé ✅',
-                      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ]),
-              ),
-            ),
-          );
+          final on = AichaMedia.online.value;
+          if (!on) {
+            return _bar(const Color(0xFFC62828), Colors.white, Icons.wifi_off_rounded,
+                n > 0
+                    ? 'Pas de connexion Internet • $n envoi(s) en attente'
+                    : 'Pas de connexion Internet • vos envois partiront au retour du réseau');
+          }
+          if (n > 0) {
+            return _bar(const Color(0xFFFFF4E5), const Color(0xFF8A5200),
+                Icons.cloud_upload_outlined, 'Synchronisation en attente ($n)…');
+          }
+          if (_backOnline || synced) {
+            return _bar(const Color(0xFFEAF6E5), const Color(0xFF1E8B09),
+                Icons.wifi_rounded,
+                _backOnline ? 'Connexion rétablie ✅' : 'Synchronisé ✅');
+          }
+          return const SizedBox.shrink();
         },
       ),
     );

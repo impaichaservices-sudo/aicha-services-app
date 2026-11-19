@@ -102,6 +102,7 @@ class ShopOrder {
   final bool quoteNeeded;
   final int? quotedTotal;
   final String adminNote;
+  final String handledByName; // agent qui a traité la commande
   final String paymentMethod;
   final String paymentStatus;
   final String status;
@@ -125,6 +126,7 @@ class ShopOrder {
     required this.quoteNeeded,
     this.quotedTotal,
     this.adminNote = '',
+    this.handledByName = '',
     required this.paymentMethod,
     this.paymentStatus = 'en_attente',
     this.status = 'nouvelle',
@@ -200,6 +202,7 @@ class ShopOrder {
       quoteNeeded: (d['quoteNeeded'] ?? false) as bool,
       quotedTotal: (d['quotedTotal'] as num?)?.toInt(),
       adminNote: (d['adminNote'] ?? '') as String,
+      handledByName: (d['handledByName'] ?? '') as String,
       paymentMethod: (d['paymentMethod'] ?? 'especes') as String,
       paymentStatus: (d['paymentStatus'] ?? 'en_attente') as String,
       status: (d['status'] ?? 'nouvelle') as String,

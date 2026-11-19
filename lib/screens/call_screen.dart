@@ -105,18 +105,36 @@ class _CallScreenState extends State<CallScreen> {
     switch (c.state.value) {
       case CallState.ringing:
         _status = 'Sonnerie…';
+        if (c.isCaller && !_toneOn) {
+          _toneOn = true;
+          AichaMedia.ringback().catchError((_) {});
+        }
         break;
       case CallState.connecting:
         _status = 'Connexion…';
+        _stopTone();
         break;
       case CallState.connected:
         _status = '';
+        _stopTone();
         break;
       case CallState.ended:
-        _close(c.ended.value);
+        _stopTone();
+        final r = c.ended.value;
+        if (c.isCaller && (r.contains('refusé') || r.contains('communication'))) {
+          AichaMedia.busyTone().catchError((_) {});
+        }
+        _close(r);
         return;
     }
     setState(() {});
+  }
+
+  bool _toneOn = false;
+  void _stopTone() {
+    if (!_toneOn) return;
+    _toneOn = false;
+    AichaMedia.stopTone().catchError((_) {});
   }
 
   bool _closing = false;
@@ -167,6 +185,7 @@ class _CallScreenState extends State<CallScreen> {
     _incomingSub?.cancel();
     _call?.state.removeListener(_onState);
     AichaMedia.stopRing();
+    if (_toneOn) AichaMedia.stopTone().catchError((_) {});
     AichaMedia.showOnLock(false).catchError((_) {});
     if (_waitingAnswer) CallService.decline(widget.callId);
     final c = _call;

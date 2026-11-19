@@ -180,7 +180,8 @@ class AdminOrderDetailScreen extends StatelessWidget {
     try {
       await Db.setOrderStatus(o, s,
           senderId: me.uid,
-          senderName: sessionOf(context, listen: false).teamName(o.shopId));
+          senderName: sessionOf(context, listen: false).teamName(o.shopId),
+          agentName: me.name);
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context)
@@ -240,7 +241,8 @@ class AdminOrderDetailScreen extends StatelessWidget {
     final value = int.parse(amount.text);
     if (!context.mounted) return;
     final team = sessionOf(context, listen: false).teamName(o.shopId);
-    await Db.setQuote(o.id, value, note.text.trim());
+    await Db.setQuote(o.id, value, note.text.trim(),
+        agentId: me.uid, agentName: me.name);
     NotifyService.toUser(
       uid: o.buyerId,
       kind: 'orders',

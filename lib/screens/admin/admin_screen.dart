@@ -6,11 +6,13 @@ import '../../models/chat.dart';
 import '../../models/order.dart';
 import '../../services/db.dart';
 import '../../services/session.dart';
+import '../../utils.dart';
 import 'admin_catalog_screen.dart';
 import 'admin_clients_screen.dart';
 import 'admin_conversations_screen.dart';
 import 'admin_notifications_screen.dart';
 import 'admin_orders_screen.dart';
+import 'admin_reset_screen.dart';
 import 'admin_promotions_screen.dart';
 import 'admin_settings_screen.dart';
 import 'admin_shops_screen.dart';
@@ -52,9 +54,10 @@ class _AdminScreenState extends State<AdminScreen> {
     final scope = s.managedShopId;
     _ensureStreams(scope, s.isSuper, s.agentUid);
     final me = s.me;
-    final title = s.isSuper
-        ? 'ADMINISTRATION AÏCHA SERVICES'
-        : 'Bonjour, ${s.shopById(scope!).name}';
+    final title = '${greetUser(me.name)} 👋';
+    final place = s.isSuper
+        ? 'Administration Aïcha Services • toutes les boutiques'
+        : '${s.agentUid != null ? 'Agent' : 'Responsable'} • ${s.shopById(scope!).name}';
 
     return Scaffold(
       appBar: AppBar(
@@ -100,6 +103,9 @@ class _AdminScreenState extends State<AdminScreen> {
                   Text(title,
                       style: const TextStyle(
                           fontSize: 21, fontWeight: FontWeight.w900)),
+                  Text(place,
+                      style: const TextStyle(
+                          color: AppConfig.green, fontWeight: FontWeight.w700)),
                   Text('$today commande${today > 1 ? 's' : ''} aujourd\'hui',
                       style: const TextStyle(color: Colors.black54)),
                   const SizedBox(height: 16),
@@ -166,6 +172,16 @@ class _AdminScreenState extends State<AdminScreen> {
                     _menu(Icons.storefront_rounded, 'Boutiques',
                         'Créer, modifier, désactiver',
                         () => _push(const AdminShopsScreen())),
+                  if (s.isSuper)
+                    StreamBuilder(
+                      stream: Db.pendingResets(),
+                      builder: (context, rs) => _menu(
+                          Icons.lock_reset_rounded,
+                          'Mots de passe oubliés',
+                          'Réinitialiser le mot de passe d\'un client',
+                          () => _push(AdminResetScreen(me: me)),
+                          badge: rs.data?.length ?? 0),
+                    ),
                   if (s.isSuper || (s.staff?.isManager ?? false))
                     _menu(Icons.badge_rounded, 'Équipe',
                         s.isSuper ? 'Responsables et agents' : 'Mes agents et leurs permissions',

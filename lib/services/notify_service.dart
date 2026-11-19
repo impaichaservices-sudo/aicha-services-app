@@ -138,6 +138,34 @@ class NotifyService {
     });
   }
 
+  /// Super Admin : donner un nouveau mot de passe à un utilisateur.
+  /// Passe par le serveur Cloudflare (lui seul peut modifier un compte).
+  /// Renvoie '' si c'est fait, sinon le message d'erreur.
+  static Future<String> resetPassword({required String uid, required String password}) async {
+    try {
+      final url = await _endpoint();
+      if (url.isEmpty) {
+        return 'Le serveur Cloudflare n\'est pas encore configuré : '
+            'la réinitialisation sera possible après sa mise en place.';
+      }
+      final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+      if (token == null) return 'Reconnectez-vous puis réessayez.';
+      final res = await http
+          .post(Uri.parse(url),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+              body: jsonEncode({'action': 'reset_password', 'uid': uid, 'password': password}))
+          .timeout(const Duration(seconds: 20));
+      if (res.statusCode == 200) return '';
+      if (res.statusCode == 403) return 'Seul le Super Admin peut réinitialiser un mot de passe.';
+      return 'Réinitialisation impossible (${res.statusCode}).';
+    } catch (_) {
+      return 'Vérifiez votre connexion Internet.';
+    }
+  }
+
   /// Faire sonner le(s) téléphone(s) appelé(s), même application fermée.
   /// Le serveur vérifie que l'appelant a le droit d'appeler.
   static void incomingCall({required String callId}) {

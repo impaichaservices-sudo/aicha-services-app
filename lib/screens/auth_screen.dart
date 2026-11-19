@@ -57,8 +57,78 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  /// Mot de passe oublié : le client écrit à la boutique sur WhatsApp.
+  /// Mot de passe oublié : demande de réinitialisation envoyée au Super Admin
+  /// (ou message WhatsApp à la boutique).
   Future<void> _forgot() async {
+    final phone = TextEditingController(text: _phone.text.trim());
+    final name = TextEditingController();
+    final msg = TextEditingController();
+    final key = GlobalKey<FormState>();
+    final send = await showDialog<String>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Mot de passe oublié'),
+        content: SingleChildScrollView(
+          child: Form(
+            key: key,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Text('Envoyez une demande : l\'équipe vous donnera un nouveau '
+                  'mot de passe, par exemple sur WhatsApp.'),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: phone,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(labelText: 'Votre numéro *'),
+                validator: (v) => AuthService.isValidPhone(v ?? '')
+                    ? null
+                    : 'Numéro invalide (8 chiffres)',
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: name,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'Votre nom *'),
+                validator: (v) =>
+                    (v == null || v.trim().isEmpty) ? 'Champ obligatoire' : null,
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: msg,
+                maxLines: 2,
+                decoration: const InputDecoration(labelText: 'Message (facultatif)'),
+              ),
+            ]),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, 'wa'), child: const Text('WhatsApp')),
+          FilledButton(
+            onPressed: () {
+              if (key.currentState!.validate()) Navigator.pop(c, 'request');
+            },
+            child: const Text('Envoyer la demande'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || send == null) return;
+    if (send == 'request') {
+      final messenger = ScaffoldMessenger.of(context);
+      try {
+        await Db.addResetRequest(
+          phone: AuthService.displayPhone(phone.text.trim()),
+          name: name.text.trim(),
+          message: msg.text.trim(),
+        ).timeout(const Duration(seconds: 15));
+        messenger.showSnackBar(const SnackBar(
+            duration: Duration(seconds: 6),
+            content: Text('Demande envoyée ✅ L\'équipe vous contactera avec un nouveau mot de passe.')));
+      } catch (_) {
+        messenger.showSnackBar(const SnackBar(
+            content: Text('Envoi impossible. Vérifiez votre connexion Internet.')));
+      }
+      return;
+    }
     ShopSettings s = const ShopSettings();
     try {
       s = ShopSettings.fromDoc(await Db.settingsDoc.get());
@@ -72,7 +142,7 @@ class _AuthScreenState extends State<AuthScreen> {
     }
     await launchUrl(
       whatsappUri(contact,
-          'Bonjour, j\'ai oublié mon mot de passe. Mon numéro : ${_phone.text.trim()}'),
+          'Bonjour, j\'ai oublié mon mot de passe. Mon numéro : ${phone.text.trim()}'),
       mode: LaunchMode.externalApplication,
     );
   }

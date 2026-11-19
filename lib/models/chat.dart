@@ -74,6 +74,7 @@ class ChatMessage {
   final String fileName;
   final DateTime? createdAt;
   final bool pending; // pas encore parti (hors connexion)
+  final String agentName; // membre de l'équipe qui a écrit
 
   const ChatMessage({
     required this.id,
@@ -88,6 +89,7 @@ class ChatMessage {
     required this.fileName,
     required this.createdAt,
     this.pending = false,
+    this.agentName = '',
   });
 
   bool get fromShop => senderRole == 'shop';
@@ -107,6 +109,7 @@ class ChatMessage {
       fileName: (d['fileName'] ?? '') as String,
       createdAt: (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       pending: doc.metadata.hasPendingWrites,
+      agentName: (d['agentName'] ?? '') as String,
     );
   }
 }

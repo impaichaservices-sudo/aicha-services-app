@@ -33,3 +33,25 @@ String timeLabel(DateTime? d) {
   if (d.year == now.year && d.month == now.month && d.day == now.day) return hm;
   return '${two(d.day)}/${two(d.month)} $hm';
 }
+
+/// Salutation selon l'heure : Bonjour (5 h – 12 h), Bon après-midi
+/// (12 h – 18 h), Bonsoir (18 h – 5 h).
+String greeting([DateTime? at]) {
+  final h = (at ?? DateTime.now()).hour;
+  if (h >= 5 && h < 12) return 'Bonjour';
+  if (h >= 12 && h < 18) return 'Bon après-midi';
+  return 'Bonsoir';
+}
+
+/// Prénom (premier mot du nom), pour saluer : « Bonjour Baba ».
+String firstName(String name) {
+  final n = name.trim();
+  if (n.isEmpty) return '';
+  return n.split(RegExp(r'\s+')).first;
+}
+
+/// « Bonjour Baba » (ou seulement « Bonjour » si le nom est inconnu).
+String greetUser(String name) {
+  final f = firstName(name);
+  return f.isEmpty ? greeting() : '${greeting()} $f';
+}

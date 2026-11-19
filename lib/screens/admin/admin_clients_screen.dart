@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../config.dart';
 import '../../models/app_user.dart';
 import '../../services/call_service.dart';
+import 'admin_reset_screen.dart';
 import '../../services/db.dart';
 import '../../services/session.dart';
 import '../../utils.dart';
@@ -105,6 +106,8 @@ class _AdminClientsScreenState extends State<AdminClientsScreen> {
                               otherName: u.name,
                               me: widget.me,
                             );
+                          } else if (a == 'reset') {
+                            resetUserPassword(context, u);
                           } else if (a == 'call') {
                             launchUrl(Uri.parse('tel:${u.phone}'));
                           } else if (a == 'wa') {
@@ -120,6 +123,9 @@ class _AdminClientsScreenState extends State<AdminClientsScreen> {
                           PopupMenuItem(
                               value: 'call', child: Text('Appeler (numéro)')),
                           PopupMenuItem(value: 'wa', child: Text('WhatsApp')),
+                          PopupMenuItem(
+                              value: 'reset',
+                              child: Text('Réinitialiser le mot de passe')),
                         ],
                       ),
                     ),

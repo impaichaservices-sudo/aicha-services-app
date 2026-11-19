@@ -140,7 +140,8 @@ service cloud.firestore {
         // Super Admin ou équipe autorisée : statut, prix final, message
         ((isSuper() || canIn(resource.data.get('shopId', 'main'), 'status')
                     || canIn(resource.data.get('shopId', 'main'), 'quotes'))
-          && onlyChanges(['status', 'quotedTotal', 'adminNote', 'updatedAt'])
+          && onlyChanges(['status', 'quotedTotal', 'adminNote', 'updatedAt',
+                          'handledBy', 'handledByName'])
           && request.resource.data.status in
                ['nouvelle', 'confirmee', 'en_cours', 'prete', 'livree', 'annulee'])
         ||
@@ -201,8 +202,10 @@ service cloud.firestore {
 
     // ---------- Fichiers ----------
     match /files/{id} {
+      // Un agent ne voit pas les fichiers des discussions de ses collègues.
       allow read: if signedIn() && (
-        resource.data.ownerId == me() || manages(resource.data.get('shopId', 'main')));
+        resource.data.ownerId == me() || isSuper()
+        || isManagerOf(resource.data.get('shopId', 'main')));
       allow create: if signedIn() && request.resource.data.ownerId == me();
       allow update: if false;
       allow delete: if signedIn() && (
@@ -213,8 +216,10 @@ service cloud.firestore {
     function blob(id) { return /databases/$(database)/documents/blobs/$(id); }
     function canReadBlob(d) {
       return d.ownerId == me()
-        || manages(d.get('shopId', 'main'))
-        || get(conv(d.conversationId)).data.clientId == me();
+        || isSuper()
+        || isManagerOf(d.get('shopId', 'main'))
+        || get(conv(d.conversationId)).data.clientId == me()
+        || staffSees(get(conv(d.conversationId)).data);
     }
     match /blobs/{id} {
       allow get: if signedIn() && canReadBlob(resource.data);
@@ -267,6 +272,27 @@ service cloud.firestore {
           || manages(get(callDoc(id)).data.get('shopId', 'main')));
         allow update, delete: if false;
       }
+    }
+
+    // Mots de passe oubliés : demande possible sans être connecté
+    // (champs limités), lecture et traitement par le Super Admin seulement.
+    match /resetRequests/{id} {
+      allow create: if request.resource.data.keys().hasOnly(
+            ['phone', 'name', 'message', 'status', 'createdAt'])
+        && request.resource.data.phone is string
+        && request.resource.data.phone.size() <= 20
+        && request.resource.data.name is string
+        && request.resource.data.name.size() <= 60
+        && request.resource.data.message is string
+        && request.resource.data.message.size() <= 300
+        && request.resource.data.status == 'en_attente';
+      allow read, update, delete: if isSuper();
+    }
+
+    // Présence de l'équipe (pour transférer un appel si l'agent est absent)
+    match /presence/{uid} {
+      allow read: if signedIn();
+      allow write: if signedIn() && me() == uid;
     }
 
     match /payments/{id} {

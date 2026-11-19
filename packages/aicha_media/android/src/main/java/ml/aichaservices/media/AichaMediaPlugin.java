@@ -7,6 +7,14 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Intent;
 import android.media.AudioAttributes;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkInfo;
+import android.os.Handler;
+import android.os.Looper;
+import android.media.AudioManager;
+import android.media.ToneGenerator;
 import android.net.Uri;
 import android.provider.Settings;
 import android.view.WindowManager;
@@ -37,6 +45,9 @@ public class AichaMediaPlugin implements FlutterPlugin, ActivityAware,
     private MediaPlayer player;
     private Ringtone ringtone;
     private Vibrator vibrator;
+    private ToneGenerator tone;
+    private ConnectivityManager.NetworkCallback netCallback;
+    private final Handler main = new Handler(Looper.getMainLooper());
 
     @Override
     public void onAttachedToEngine(FlutterPluginBinding binding) {
@@ -51,6 +62,72 @@ public class AichaMediaPlugin implements FlutterPlugin, ActivityAware,
         releaseRecorder();
         releasePlayer();
         stopRing();
+        stopTone();
+        stopNet();
+    }
+
+    /** true si Internet fonctionne vraiment (réseau validé par Android). */
+    private boolean isOnline() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager)
+                    context.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return true;
+            if (Build.VERSION.SDK_INT >= 23) {
+                Network n = cm.getActiveNetwork();
+                if (n == null) return false;
+                NetworkCapabilities c = cm.getNetworkCapabilities(n);
+                return c != null
+                        && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+            }
+            NetworkInfo i = cm.getActiveNetworkInfo();
+            return i != null && i.isConnected();
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    private void sendNet() {
+        main.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (channel != null) channel.invokeMethod("net", isOnline());
+            }
+        }, 300);
+    }
+
+    private void watchNet() {
+        if (netCallback != null || Build.VERSION.SDK_INT < 24) return;
+        try {
+            ConnectivityManager cm = (ConnectivityManager)
+                    context.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return;
+            netCallback = new ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(Network network) { sendNet(); }
+                @Override public void onLost(Network network) { sendNet(); }
+                @Override public void onCapabilitiesChanged(Network network,
+                        NetworkCapabilities caps) { sendNet(); }
+            };
+            cm.registerDefaultNetworkCallback(netCallback);
+        } catch (Exception ignored) { netCallback = null; }
+    }
+
+    private void stopNet() {
+        if (netCallback == null) return;
+        try {
+            ConnectivityManager cm = (ConnectivityManager)
+                    context.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm != null) cm.unregisterNetworkCallback(netCallback);
+        } catch (Exception ignored) { }
+        netCallback = null;
+    }
+
+    private void stopTone() {
+        if (tone != null) {
+            try { tone.stopTone(); } catch (Exception ignored) { }
+            try { tone.release(); } catch (Exception ignored) { }
+            tone = null;
+        }
     }
 
     private void stopRing() {
@@ -140,6 +217,54 @@ public class AichaMediaPlugin implements FlutterPlugin, ActivityAware,
         } catch (Exception ignored) { }
     }
 
+    private static final int BADGE_NOTIF_ID = 7314;
+    private static final String BADGE_CHANNEL = "aicha_badge";
+
+    /** Pastille sur l'icône : notification discrète (sans son) avec le total.
+     *  Le lanceur du téléphone affiche le chiffre sur l'icône de l'appli. */
+    private void setBadge(int count, String text) {
+        try {
+            NotificationManager nm = (NotificationManager)
+                    context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null) return;
+            if (count <= 0) {
+                nm.cancel(BADGE_NOTIF_ID);
+                return;
+            }
+            if (Build.VERSION.SDK_INT >= 26) {
+                NotificationChannel ch = new NotificationChannel(BADGE_CHANNEL,
+                        "Nouveautés (pastille)", NotificationManager.IMPORTANCE_LOW);
+                ch.setDescription("Nombre de messages, appels et commandes non vus");
+                ch.setShowBadge(true);
+                ch.setSound(null, null);
+                ch.enableVibration(false);
+                nm.createNotificationChannel(ch);
+            }
+            Intent launch = context.getPackageManager()
+                    .getLaunchIntentForPackage(context.getPackageName());
+            if (launch == null) return;
+            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= 23) flags |= PendingIntent.FLAG_IMMUTABLE;
+            PendingIntent pi = PendingIntent.getActivity(context, 7315, launch, flags);
+            Notification.Builder b = Build.VERSION.SDK_INT >= 26
+                    ? new Notification.Builder(context, BADGE_CHANNEL)
+                    : new Notification.Builder(context);
+            int icon = context.getApplicationInfo().icon;
+            b.setSmallIcon(icon == 0 ? android.R.drawable.stat_notify_chat : icon)
+                    .setContentTitle("Aïcha Services")
+                    .setContentText(text == null ? "Vous avez des nouveautés" : text)
+                    .setNumber(count)
+                    .setOnlyAlertOnce(true)
+                    .setAutoCancel(true)
+                    .setContentIntent(pi);
+            if (Build.VERSION.SDK_INT >= 26) {
+                b.setBadgeIconType(Notification.BADGE_ICON_SMALL);
+            }
+            nm.notify(BADGE_NOTIF_ID, b.build());
+        } catch (Exception ignored) { }
+    }
+
     /** Affiche l'application par-dessus l'écran verrouillé (appel entrant). */
     private void setShowOnLock(final boolean on) {
         final Activity a = activity;
@@ -185,6 +310,15 @@ public class AichaMediaPlugin implements FlutterPlugin, ActivityAware,
     @Override
     public void onMethodCall(MethodCall call, MethodChannel.Result result) {
         switch (call.method) {
+            case "isOnline": {
+                result.success(isOnline());
+                break;
+            }
+            case "watchNet": {
+                watchNet();
+                result.success(isOnline());
+                break;
+            }
             case "hasMic": {
                 result.success(micGranted());
                 break;
@@ -318,6 +452,36 @@ public class AichaMediaPlugin implements FlutterPlugin, ActivityAware,
                             context.getSystemService(Context.NOTIFICATION_SERVICE);
                     if (nm != null) nm.cancel(CALL_NOTIF_ID);
                 } catch (Exception ignored) { }
+                result.success(null);
+                break;
+            }
+            case "ringback": {
+                // « Tuut… tuut… » : ça sonne chez la personne appelée.
+                stopTone();
+                try {
+                    tone = new ToneGenerator(AudioManager.STREAM_VOICE_CALL, 80);
+                    tone.startTone(ToneGenerator.TONE_SUP_RINGTONE);
+                } catch (Exception ignored) { tone = null; }
+                result.success(null);
+                break;
+            }
+            case "busyTone": {
+                stopTone();
+                try {
+                    tone = new ToneGenerator(AudioManager.STREAM_VOICE_CALL, 80);
+                    tone.startTone(ToneGenerator.TONE_SUP_BUSY, 2500);
+                } catch (Exception ignored) { tone = null; }
+                result.success(null);
+                break;
+            }
+            case "stopTone": {
+                stopTone();
+                result.success(null);
+                break;
+            }
+            case "setBadge": {
+                Integer n = call.argument("count");
+                setBadge(n == null ? 0 : n, (String) call.argument("text"));
                 result.success(null);
                 break;
             }

@@ -32,8 +32,47 @@ class CallService {
   static String _watchKey = '';
   static final Set<String> _shown = {};
 
+  // ---------- Présence de l'équipe (en ligne / hors ligne) ----------
+  static CollectionReference<Map<String, dynamic>> get presence =>
+      _fs.collection('presence');
+  static Timer? _presenceTimer;
+  static String _presenceUid = '';
+  static _Lifecycle? _life;
+
+  static void _startPresence(Session s) {
+    if (!s.canManage || _presenceUid == s.uid) return;
+    _presenceUid = s.uid;
+    final shopId = s.staff?.shopId ?? 'main';
+    void beat(bool online) {
+      presence.doc(s.uid).set({
+        'online': online,
+        'shopId': shopId,
+        'lastSeen': FieldValue.serverTimestamp(),
+      }).catchError((_) {});
+    }
+    beat(true);
+    _presenceTimer?.cancel();
+    _presenceTimer = Timer.periodic(const Duration(seconds: 60), (_) => beat(true));
+    _life ??= _Lifecycle((fg) => beat(fg));
+    WidgetsBinding.instance.addObserver(_life!);
+  }
+
+  /// L'agent a-t-il eu l'application ouverte il y a moins de 2 minutes ?
+  static Future<bool> _isOnline(String uid) async {
+    try {
+      final d = (await presence.doc(uid).get().timeout(const Duration(seconds: 4))).data();
+      if (d == null || d['online'] != true) return false;
+      final at = d['lastSeen'];
+      return at is Timestamp &&
+          DateTime.now().difference(at.toDate()) < const Duration(minutes: 2);
+    } catch (_) {
+      return true; // dans le doute, on fait sonner l'agent d'abord
+    }
+  }
+
   /// À appeler à chaque mise à jour de la session.
   static void watch(Session s) {
+    _startPresence(s);
     final String key;
     Query<Map<String, dynamic>> q;
     if (s.isSuper) {
@@ -65,11 +104,11 @@ class CallService {
         if (data['callerId'] == s.uid) continue;
         // Discussion attribuée à un agent : seul lui (et le responsable) sonne.
         final callee = (data['calleeId'] ?? '') as String;
-        if (s.canManage && callee.isNotEmpty && callee != s.uid) {
-          final manager = !s.isSuper && s.agentUid == null;
+        // Le Super Admin (qui fait aussi office de responsable) sonne pour tous.
+        if (s.canManage && !s.isSuper && callee.isNotEmpty && callee != s.uid) {
+          final manager = s.agentUid == null;
           if (!manager) continue;
         }
-        if (s.isSuper && callee.isEmpty && data['shopId'] != 'main') continue;
         if (_shown.contains(d.id)) continue;
         if (current != null) {
           // Déjà en communication : l'appelant entend « occupé ».
@@ -168,13 +207,15 @@ class CallService {
       clientName = (c.data()?['clientName'] ?? otherName) as String;
     }
     if (clientId.isEmpty) throw Exception('Client introuvable.');
-    // Agent responsable de la discussion (c'est lui qui sonne).
+    // Agent responsable de la discussion (c'est lui qui sonne en premier).
+    // S'il n'est pas en ligne, l'appel va directement à toute l'équipe.
     var calleeId = '';
     if (!asShop) {
       try {
         final c = await Db.conversations.doc(conversationId).get();
         calleeId = (c.data()?['assignedTo'] ?? '') as String;
       } catch (_) {}
+      if (calleeId.isNotEmpty && !await _isOnline(calleeId)) calleeId = '';
     }
     final ref = calls.doc();
     final call = ActiveCall._(ref, isCaller: true, myUid: myUid, myName: myName)
@@ -185,7 +226,8 @@ class CallService {
     current = call;
     try {
       await call._open();
-      final offer = await call._pc!.createOffer({'offerToReceiveAudio': true});
+      final offer = lowBandwidth(
+          await call._pc!.createOffer({'offerToReceiveAudio': true}));
       await call._pc!.setLocalDescription(offer);
       await ref.set({
         'callerId': myUid,
@@ -205,7 +247,17 @@ class CallService {
       call._listen();
       // Faire sonner le téléphone appelé même si l'application y est fermée.
       NotifyService.incomingCall(callId: ref.id);
-      call._timeout = Timer(const Duration(seconds: 45), () {
+      // Pas de réponse de l'agent en 15 s : l'appel passe à toute l'équipe.
+      if (calleeId.isNotEmpty) {
+        call._escalate = Timer(const Duration(seconds: 15), () {
+          if (call.state.value == CallState.ringing) {
+            ref.update({'calleeId': '', 'escalated': true}).then((_) {
+              NotifyService.incomingCall(callId: ref.id);
+            }).catchError((_) {});
+          }
+        });
+      }
+      call._timeout = Timer(const Duration(seconds: 50), () {
         if (call.state.value == CallState.ringing) {
           call._finish('missed', reason: 'Pas de réponse');
         }
@@ -257,7 +309,8 @@ class CallService {
       final offer = data['offer'] as Map<String, dynamic>;
       await call._pc!.setRemoteDescription(
           RTCSessionDescription(offer['sdp'] as String, offer['type'] as String));
-      final answer = await call._pc!.createAnswer({'offerToReceiveAudio': true});
+      final answer = lowBandwidth(
+          await call._pc!.createAnswer({'offerToReceiveAudio': true}));
       await call._pc!.setLocalDescription(answer);
       await ref.update({'answer': {'sdp': answer.sdp, 'type': answer.type}});
       call._docReady();
@@ -280,6 +333,33 @@ class CallService {
       await calls.doc(callId).update({'status': 'declined'});
       NotifyService.callEnded(callId: callId);
     } catch (_) {}
+  }
+
+  /// Réglages audio pour les connexions faibles : débit réduit (24 kb/s),
+  /// correction des pertes (FEC) et silence non transmis (DTX).
+  static RTCSessionDescription lowBandwidth(RTCSessionDescription d) {
+    var sdp = d.sdp ?? '';
+    final m = RegExp(r'a=rtpmap:(\d+) opus/48000[^\r\n]*').firstMatch(sdp);
+    if (m != null) {
+      final pt = m.group(1)!;
+      final fmtp = RegExp('a=fmtp:$pt ([^\r\n]*)');
+      const extra = 'useinbandfec=1;usedtx=1;maxaveragebitrate=24000';
+      if (fmtp.hasMatch(sdp)) {
+        sdp = sdp.replaceFirstMapped(fmtp, (x) {
+          final params = x.group(1)!
+              .split(';')
+              .where((p) =>
+                  !p.startsWith('useinbandfec') &&
+                  !p.startsWith('usedtx') &&
+                  !p.startsWith('maxaveragebitrate'))
+              .join(';');
+          return 'a=fmtp:$pt ${params.isEmpty ? '' : '$params;'}$extra';
+        });
+      } else {
+        sdp = sdp.replaceFirst(m.group(0)!, '${m.group(0)}\r\na=fmtp:$pt $extra');
+      }
+    }
+    return RTCSessionDescription(sdp, d.type);
   }
 
   /// Serveurs pour traverser les réseaux (STUN gratuit de Google + TURN
@@ -331,6 +411,7 @@ class ActiveCall {
   StreamSubscription? _docSub;
   StreamSubscription? _candSub;
   Timer? _timeout;
+  Timer? _escalate;
   bool _ready = false;
   bool _remoteSet = false;
   final List<RTCIceCandidate> _pendingOut = [];
@@ -343,8 +424,14 @@ class ActiveCall {
   String get _side => isCaller ? 'caller' : 'callee';
 
   Future<void> _open() async {
-    _local = await navigator.mediaDevices
-        .getUserMedia({'audio': true, 'video': false});
+    _local = await navigator.mediaDevices.getUserMedia({
+      'audio': {
+        'echoCancellation': true,
+        'noiseSuppression': true,
+        'autoGainControl': true,
+      },
+      'video': false,
+    });
     _pc = await createPeerConnection({
       'iceServers': await CallService._iceServers(),
       'sdpSemantics': 'unified-plan',
@@ -371,7 +458,7 @@ class ActiveCall {
       } else if (s == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
         // Coupure réseau : on laisse 12 s pour que la connexion revienne.
         _lostTimer?.cancel();
-        _lostTimer = Timer(const Duration(seconds: 12), () {
+        _lostTimer = Timer(const Duration(seconds: 20), () {
           if (state.value != CallState.ended) {
             _finish(connectedAt == null ? 'failed' : 'ended',
                 reason: 'Connexion perdue. Vérifiez votre connexion Internet.');
@@ -389,7 +476,7 @@ class ActiveCall {
   /// Décroché mais pas connecté au bout de 30 s : appel impossible.
   void _watchConnect() {
     _connectTimer?.cancel();
-    _connectTimer = Timer(const Duration(seconds: 30), () {
+    _connectTimer = Timer(const Duration(seconds: 45), () {
       if (state.value != CallState.connected && state.value != CallState.ended) {
         _finish('failed', reason: _failText);
       }
@@ -422,6 +509,7 @@ class ActiveCall {
         final a = data['answer'] as Map<String, dynamic>;
         _remoteSet = true;
         _timeout?.cancel();
+        _escalate?.cancel();
         otherName = (data['answeredByName'] ?? otherName) as String;
         state.value = CallState.connecting;
         _watchConnect();
@@ -496,6 +584,7 @@ class ActiveCall {
     if (_closed) return;
     _closed = true;
     _timeout?.cancel();
+    _escalate?.cancel();
     _connectTimer?.cancel();
     _lostTimer?.cancel();
     final d = connectedAt == null ? null : DateTime.now().difference(connectedAt!);
@@ -555,5 +644,17 @@ class ActiveCall {
     _pc = null;
     _local = null;
     if (CallService.current == this) CallService.current = null;
+  }
+}
+
+/// Suit l'ouverture / la fermeture de l'application (présence de l'équipe).
+class _Lifecycle with WidgetsBindingObserver {
+  final void Function(bool foreground) onChange;
+  _Lifecycle(this.onChange);
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) onChange(true);
+    if (state == AppLifecycleState.paused) onChange(false);
   }
 }

@@ -78,8 +78,8 @@ class UpdateService {
       _ask(last);
     } else {
       messenger.showSnackBar(SnackBar(
-          content: Text('Votre application est à jour ✅'
-              '${build > 0 ? ' (version $build)' : ''}')));
+          content: Text('Votre application est à jour ✅ '
+              '(version ${AppConfig.versionName})')));
     }
   }
 
@@ -91,11 +91,10 @@ class UpdateService {
       context: ctx,
       builder: (c) => AlertDialog(
         icon: const Icon(Icons.system_update, color: AppConfig.green, size: 42),
-        title: const Text('Nouvelle version disponible'),
+        title: const Text('Nouvelle mise à jour disponible'),
         content: SingleChildScrollView(
           child: Text(
-              'Version actuelle : $build\n'
-              'Nouvelle version : $last\n'
+              'Une nouvelle mise à jour de l\'application est prête.\n'
               '${latestSize > 0 ? 'Taille : ${(latestSize / (1024 * 1024)).toStringAsFixed(1)} Mo\n' : ''}'
               '${latestNotes.isNotEmpty ? '\nNouveautés :\n$latestNotes\n' : ''}'
               '\nLe téléchargement se fait dans l\'application, puis '
@@ -323,7 +322,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
             child: Text(
               _step == _Step.downloading
                   ? 'Téléchargement de la mise à jour'
-                  : 'Mise à jour (version ${widget.version})',
+                  : 'Mise à jour de l\'application',
               style: const TextStyle(fontSize: 18),
             ),
           ),
@@ -360,11 +359,11 @@ class _UpdateTileState extends State<UpdateTile> {
         if (UpdateService.build == 0) {
           sub = 'Vérifier les nouvelles versions';
         } else if (last == null) {
-          sub = 'Version ${UpdateService.build}';
+          sub = 'Version ${AppConfig.versionName}';
         } else if (available) {
-          sub = 'Nouvelle version $last disponible';
+          sub = 'Nouvelle mise à jour disponible';
         } else {
-          sub = 'Version ${UpdateService.build} • à jour ✅';
+          sub = 'Version ${AppConfig.versionName} • à jour ✅';
         }
         return ListTile(
           leading: Badge(

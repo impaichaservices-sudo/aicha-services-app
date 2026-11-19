@@ -81,6 +81,21 @@ export default {
           ...message,
           condition: topics.map((t) => `'${t}' in topics`).join(' || '),
         });
+      } else if (body.action === 'reset_password') {
+        // Super Admin uniquement : nouveau mot de passe pour un utilisateur.
+        if (!isSuper) throw httpErr(403, 'interdit');
+        const pwd = String(body.password || '');
+        if (!body.uid || pwd.length < 6) throw httpErr(400, 'mot de passe trop court');
+        const r = await fetch(
+          `https://identitytoolkit.googleapis.com/v1/projects/${projectId}/accounts:update`,
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${access}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ localId: String(body.uid), password: pwd }),
+          }
+        );
+        if (!r.ok) throw httpErr(500, 'réinitialisation impossible (' + r.status + ')');
+        return json({ ok: true });
       } else if (body.action === 'incoming_call' || body.action === 'call_ended') {
         // Appel par internet : faire sonner (ou arrêter) les téléphones appelés.
         const callDoc = await getDoc(access, projectId, `calls/${body.callId}`);
@@ -113,14 +128,13 @@ export default {
           for (const token of tokens) sent += await send(access, projectId, { ...dataMsg, token });
         }
         if (c.callerRole !== 'shop') {
-          // Discussion pas encore attribuée (ou responsable) : toute l'équipe de la boutique
           const shop = topicSafe(c.shopId || 'main');
-          if (!c.calleeId || body.action === 'call_ended') {
-            const cond = shop === 'main'
-              ? `'staff_main' in topics || 'staff_all' in topics`
-              : `'staff_${shop}' in topics`;
-            sent += await send(access, projectId, { ...dataMsg, condition: cond });
-          }
+          // Pas encore attribuée : toute l'équipe de la boutique + Super Admin.
+          // Attribuée : l'agent (ci-dessus) + le Super Admin.
+          const cond = !c.calleeId || body.action === 'call_ended'
+            ? `'staff_${shop}' in topics || 'staff_all' in topics`
+            : `'staff_all' in topics`;
+          sent += await send(access, projectId, { ...dataMsg, condition: cond });
         }
       } else {
         throw httpErr(400, 'action inconnue');
@@ -231,7 +245,7 @@ async function getAccessToken(sa) {
     JSON.stringify({
       iss: sa.client_email,
       scope:
-        'https://www.googleapis.com/auth/firebase.messaging https://www.googleapis.com/auth/datastore',
+        'https://www.googleapis.com/auth/firebase.messaging https://www.googleapis.com/auth/datastore https://www.googleapis.com/auth/identitytoolkit',
       aud: 'https://oauth2.googleapis.com/token',
       iat: now,
       exp: now + 3600,

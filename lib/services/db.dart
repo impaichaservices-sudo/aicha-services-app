@@ -73,6 +73,32 @@ class Db {
     return q.docs.isEmpty ? null : AppUser.fromDoc(q.docs.first);
   }
 
+  // ---------------- Mots de passe oubliés ----------------
+  static CollectionReference<Map<String, dynamic>> get resetRequests =>
+      _fs.collection('resetRequests');
+
+  /// Demande envoyée depuis l'écran de connexion (sans être connecté).
+  static Future<void> addResetRequest(
+          {required String phone, required String name, required String message}) =>
+      resetRequests.add({
+        'phone': phone,
+        'name': name,
+        'message': message,
+        'status': 'en_attente',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+  /// Demandes en attente (Super Admin).
+  static Stream<List<QueryDocumentSnapshot<Map<String, dynamic>>>> pendingResets() =>
+      resetRequests
+          .where('status', isEqualTo: 'en_attente')
+          .snapshots()
+          .map((s) => s.docs);
+
+  static Future<void> closeReset(String id, String by) => resetRequests
+      .doc(id)
+      .update({'status': 'traitee', 'doneBy': by, 'doneAt': FieldValue.serverTimestamp()});
+
   static Future<void> updateProfile(String uid, Map<String, dynamic> data) =>
       users.doc(uid).set(data, SetOptions(merge: true));
 
@@ -252,10 +278,12 @@ class Db {
 
   /// Change le statut et prévient le client dans la discussion de la commande.
   static Future<void> setOrderStatus(ShopOrder o, String status,
-      {String senderId = '', String senderName = ''}) async {
+      {String senderId = '', String senderName = '', String agentName = ''}) async {
     await orders.doc(o.id).update({
       'status': status,
       'updatedAt': FieldValue.serverTimestamp(),
+      if (senderId.isNotEmpty) 'handledBy': senderId,
+      if (agentName.isNotEmpty) 'handledByName': agentName,
     });
     final msg = orderStatusMessages[status];
     if (msg != null && senderId.isNotEmpty) {
@@ -288,10 +316,13 @@ class Db {
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
-  static Future<void> setQuote(String orderId, int amount, String note) =>
+  static Future<void> setQuote(String orderId, int amount, String note,
+          {String agentId = '', String agentName = ''}) =>
       orders.doc(orderId).update({
         'quotedTotal': amount,
         'adminNote': note,
+        if (agentId.isNotEmpty) 'handledBy': agentId,
+        if (agentName.isNotEmpty) 'handledByName': agentName,
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
@@ -486,7 +517,9 @@ class Db {
     final convData = convSnap?.data() ?? createIfMissing;
     final batch = _fs.batch();
     final preview = type == 'service'
-        ? 'Service proposé : $itemName'
+        ? (senderRole == 'client'
+            ? '🛍 $itemName${text.isEmpty ? '' : ' : $text'}'
+            : 'Service proposé : $itemName')
         : type == 'file'
             ? (text.isNotEmpty ? text : 'Fichier : $fileName')
             : text;
@@ -533,6 +566,7 @@ class Db {
       'itemName': itemName,
       'fileUrl': fileUrl,
       'fileName': fileName,
+      if (senderRole == 'shop' && agentName.isNotEmpty) 'agentName': agentName,
       'createdAt': FieldValue.serverTimestamp(),
     });
     // L'envoi part dès que la connexion est là ; on n'attend pas plus de 8 s.

@@ -168,8 +168,12 @@ class _PromotionFormScreenState extends State<PromotionFormScreen> {
   }
 
   Future<void> _pick() async {
+    final banner = _kind == 'annonce';
     final x = await ImagePicker().pickImage(
-        source: ImageSource.gallery, maxWidth: 1000, maxHeight: 700, imageQuality: 60);
+        source: ImageSource.gallery,
+        maxWidth: banner ? 1200 : 1000,
+        maxHeight: banner ? 400 : 700,
+        imageQuality: 65);
     if (x == null) return;
     final bytes = await x.readAsBytes();
     if (bytes.length > 600 * 1024) {
@@ -269,7 +273,7 @@ class _PromotionFormScreenState extends State<PromotionFormScreen> {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(16),
                 child: AspectRatio(
-                  aspectRatio: 16 / 9,
+                  aspectRatio: _kind == 'annonce' ? 4 / 1 : 16 / 9,
                   child: _image != null
                       ? Image.file(_image!, fit: BoxFit.cover)
                       : Stack(fit: StackFit.expand, children: [
@@ -287,6 +291,15 @@ class _PromotionFormScreenState extends State<PromotionFormScreen> {
                 ),
               ),
             ),
+            if (_kind == 'annonce')
+              const Padding(
+                padding: EdgeInsets.only(top: 6),
+                child: Text(
+                  'Annonce : choisissez une image horizontale (bandeau), '
+                  'par exemple 1200 × 300. Elle s\'affiche en haut de l\'accueil.',
+                  style: TextStyle(color: Colors.black54, fontSize: 12.5),
+                ),
+              ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
               value: _kind,

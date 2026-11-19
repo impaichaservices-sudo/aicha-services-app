@@ -6,6 +6,10 @@ class AppConfig {
   static const fullName = 'AÏCHA SERVICES MARKET';
   static const shortName = 'Aïcha Services';
   static const slogan = 'Votre satisfaction est notre engagement';
+  /// Nom de version affiché aux utilisateurs (fixe pendant la phase de test).
+  /// Le numéro interne de compilation, lui, augmente à chaque mise à jour
+  /// (obligatoire pour Android) mais n'est plus affiché.
+  static const versionName = '1.0 (bêta)';
   static const tagline = 'Impression • Personnalisation • Formation';
   static const logo = 'assets/logo.png';
 

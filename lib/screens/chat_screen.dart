@@ -32,6 +32,7 @@ class ChatScreen extends StatefulWidget {
   final String clientPhone; // côté équipe : pour appeler / WhatsApp
   final String shopId;
   final String orderId;
+  final CatalogItem? aboutItem; // article joint au premier message du client
 
   const ChatScreen({
     super.key,
@@ -45,6 +46,7 @@ class ChatScreen extends StatefulWidget {
     this.clientPhone = '',
     this.shopId = 'main',
     this.orderId = '',
+    this.aboutItem,
   });
 
   @override
@@ -55,9 +57,12 @@ class _ChatScreenState extends State<ChatScreen> {
   late final _text = TextEditingController(text: widget.initialText);
   late final Stream<List<ChatMessage>> _messages =
       Db.messages(widget.conversationId);
+  late final Stream<Conversation?> _conv =
+      Db.conversationStream(widget.conversationId);
   final _scroll = ScrollController();
   String _lastSeen = '';
   bool _sending = false;
+  late CatalogItem? _about = widget.aboutItem;
 
   // Message vocal en cours d'enregistrement
   bool _recording = false;
@@ -97,9 +102,17 @@ class _ChatScreenState extends State<ChatScreen> {
     String? text,
     CatalogItem? item,
   }) async {
-    final body = (text ?? _text.text).trim();
-    if (type == 'text' && body.isEmpty) return;
+    var body = (text ?? _text.text).trim();
+    final about = _about;
+    if (type == 'text' && body.isEmpty && about == null) return;
     if (type == 'text') _text.clear();
+    if (type == 'text' && about != null) {
+      // Le message part avec la fiche de l'article (photo, nom, prix).
+      type = 'service';
+      item = about;
+      if (body.isEmpty) body = 'Je voudrais des informations sur cet article.';
+      setState(() => _about = null);
+    }
     final messenger = ScaffoldMessenger.of(context);
     try {
       // Hors connexion, le message s'affiche avec 🕓 et part tout seul ensuite.
@@ -593,10 +606,22 @@ class _ChatScreenState extends State<ChatScreen> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-                Text(widget.subtitle ?? (widget.asShop ? 'Client' : 'Nous vous répondons rapidement'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                StreamBuilder<Conversation?>(
+                  stream: _conv,
+                  builder: (_, cs) {
+                    final who = cs.data?.assignedName ?? '';
+                    final text = widget.asShop
+                        ? (widget.subtitle ?? 'Client') +
+                            (who.isNotEmpty ? ' • suivi par $who' : '')
+                        : who.isNotEmpty
+                            ? 'Votre conseiller : $who'
+                            : (widget.subtitle ?? 'Nous vous répondons rapidement');
+                    return Text(text,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12, color: Colors.black54));
+                  },
+                ),
               ],
             ),
           ),
@@ -642,6 +667,11 @@ class _ChatScreenState extends State<ChatScreen> {
             color: Colors.white,
             child: _recording
                 ? _recordBar()
+                : _about != null && _previewPath.isEmpty
+                    ? Column(mainAxisSize: MainAxisSize.min, children: [
+                        _aboutBar(_about!),
+                        _inputBar(),
+                      ])
                 : _previewPath.isNotEmpty
                     ? _previewBar()
                     : _inputBar(),
@@ -702,6 +732,42 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     ]);
   }
+
+  /// Article joint (affiché au-dessus de la zone d'écriture).
+  Widget _aboutBar(CatalogItem it) => Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: AppConfig.paleGreen,
+          borderRadius: BorderRadius.circular(14),
+          border: const Border(left: BorderSide(color: AppConfig.green, width: 4)),
+        ),
+        child: Row(children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: ProductImage(it.imageUrl, size: 48),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Article joint',
+                  style: TextStyle(
+                      fontSize: 11.5, color: AppConfig.green, fontWeight: FontWeight.w800)),
+              Text(it.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
+              Text(it.priceLabel,
+                  style: const TextStyle(fontSize: 12.5, color: Colors.black54)),
+            ]),
+          ),
+          IconButton(
+            tooltip: 'Retirer l\'article',
+            onPressed: () => setState(() => _about = null),
+            icon: const Icon(Icons.close),
+          ),
+        ]),
+      );
 
   Widget _inputBar() {
     return Row(children: [
@@ -808,7 +874,12 @@ class _ChatScreenState extends State<ChatScreen> {
             if (!mine)
               Padding(
                 padding: const EdgeInsets.only(bottom: 2),
-                child: Text(m.senderName,
+                child: Text(
+                    m.agentName.isNotEmpty && !widget.asShop
+                        ? '${m.agentName} • ${m.senderName}'
+                        : m.agentName.isNotEmpty
+                            ? m.agentName
+                            : m.senderName,
                     style: const TextStyle(
                         fontSize: 11.5,
                         fontWeight: FontWeight.w800,
@@ -818,29 +889,16 @@ class _ChatScreenState extends State<ChatScreen> {
               Text(m.text, style: TextStyle(color: fg, fontSize: 15, height: 1.3)),
             if (m.type == 'service' && m.itemId.isNotEmpty) ...[
               const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: mine ? Colors.white24 : AppConfig.paleGreen,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(children: [
-                  Icon(Icons.design_services, color: mine ? Colors.white : AppConfig.green),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(m.itemName,
-                        style: TextStyle(fontWeight: FontWeight.w700, color: fg)),
-                  ),
-                ]),
+              _ServiceCard(
+                itemId: m.itemId,
+                itemName: m.itemName,
+                mine: mine,
+                fg: fg,
+                onOpen: () => _openService(m.itemId),
+                buttonLabel: !widget.asShop && m.fromShop
+                    ? 'Commander ce service'
+                    : 'Voir l\'article',
               ),
-              if (!widget.asShop) ...[
-                const SizedBox(height: 8),
-                FilledButton(
-                  style: FilledButton.styleFrom(minimumSize: const Size(0, 40)),
-                  onPressed: () => _openService(m.itemId),
-                  child: const Text('Commander ce service'),
-                ),
-              ],
             ],
             if (m.type == 'file' && m.fileName.isNotEmpty) _fileContent(m, fg, mine),
             const SizedBox(height: 2),
@@ -1083,6 +1141,75 @@ class _VoiceMessageState extends State<VoiceMessage> {
         const SizedBox(width: 4),
         Icon(Icons.mic, color: widget.color, size: 18),
       ]),
+    );
+  }
+}
+
+/// Fiche d'un article dans une bulle : photo, nom, prix et bouton.
+class _ServiceCard extends StatelessWidget {
+  final String itemId;
+  final String itemName;
+  final bool mine;
+  final Color fg;
+  final VoidCallback onOpen;
+  final String buttonLabel;
+  const _ServiceCard({
+    required this.itemId,
+    required this.itemName,
+    required this.mine,
+    required this.fg,
+    required this.onOpen,
+    required this.buttonLabel,
+  });
+
+  static final Map<String, Future<CatalogItem?>> _cache = {};
+
+  @override
+  Widget build(BuildContext context) {
+    final f = _cache[itemId] ??= Db.catalogItem(itemId);
+    return FutureBuilder<CatalogItem?>(
+      future: f,
+      builder: (_, snap) {
+        final it = snap.data;
+        return Container(
+          width: 250,
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: mine ? Colors.white : AppConfig.paleGreen,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Row(children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: ProductImage(it?.imageUrl ?? '', size: 56),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(it?.name ?? itemName,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w800, color: AppConfig.black)),
+                  if (it != null)
+                    Text(it.priceLabel,
+                        style: const TextStyle(
+                            fontSize: 12.5,
+                            color: AppConfig.green,
+                            fontWeight: FontWeight.w700)),
+                ]),
+              ),
+            ]),
+            const SizedBox(height: 8),
+            FilledButton(
+              style: FilledButton.styleFrom(minimumSize: const Size(0, 38)),
+              onPressed: onOpen,
+              child: Text(buttonLabel),
+            ),
+          ]),
+        );
+      },
     );
   }
 }

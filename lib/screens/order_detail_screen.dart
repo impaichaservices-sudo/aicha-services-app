@@ -126,6 +126,14 @@ class OrderDetailScreen extends StatelessWidget {
                             Text('Passée le ${shortDate(o.createdAt)}',
                                 style: const TextStyle(
                                     color: Colors.black54, fontSize: 13)),
+                            if (o.handledByName.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text('Traitée par : ${o.handledByName}',
+                                    style: const TextStyle(
+                                        color: AppConfig.green,
+                                        fontWeight: FontWeight.w700)),
+                              ),
                           ],
                         ),
                       ),

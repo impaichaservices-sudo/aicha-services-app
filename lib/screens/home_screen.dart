@@ -8,12 +8,15 @@ import '../models/order.dart';
 import '../models/shop.dart';
 import '../models/shop_settings.dart';
 import '../models/staff.dart';
+import '../services/badge_service.dart';
 import '../services/call_service.dart';
 import '../services/db.dart';
 import '../services/offline_queue.dart';
 import '../services/notify_service.dart';
 import '../services/update_service.dart';
 import '../services/session.dart';
+import 'admin/admin_conversations_screen.dart';
+import 'admin/admin_orders_screen.dart';
 import 'admin/admin_screen.dart';
 import 'catalog_screen.dart';
 import 'conversations_screen.dart';
@@ -77,6 +80,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   if (ready) UpdateService.checkOnStart();
                   if (ready) CallService.watch(session);
                   if (ready) OfflineQueue.start();
+                  BadgeService.start();
                 });
                 return ready && session.needsShopChoice && !session.canManage
                     ? const ShopPickerScreen(firstTime: true)
@@ -89,7 +93,47 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Espace équipe (agents, responsables, Super Admin) : interface à part.
+  Widget _staffTabs(Session session) {
+    final me = session.me;
+    final shopId = session.managedShopId;
+    final pages = <Widget>[
+      const AdminScreen(),
+      AdminConversationsScreen(me: me, shopId: shopId),
+      AdminOrdersScreen(me: me, shopId: shopId),
+      ProfileScreen(onGoTo: _goTo),
+    ];
+    final index = _index < pages.length ? _index : 0;
+    final base = Theme.of(context);
+    return Theme(
+      data: base.copyWith(
+        appBarTheme: base.appBarTheme.copyWith(
+          backgroundColor: const Color(0xFF13261A),
+          foregroundColor: Colors.white,
+          titleTextStyle: const TextStyle(
+              color: Colors.white, fontSize: 19, fontWeight: FontWeight.w800),
+          iconTheme: const IconThemeData(color: Colors.white),
+          actionsIconTheme: const IconThemeData(color: Colors.white),
+        ),
+        scaffoldBackgroundColor: const Color(0xFFF1F4F1),
+      ),
+      child: Scaffold(
+        body: IndexedStack(index: index, children: pages),
+        bottomNavigationBar: Column(mainAxisSize: MainAxisSize.min, children: [
+          const SyncBanner(),
+          _StaffNav(
+            index: index,
+            onTap: (i) => setState(() => _index = i),
+            shopId: shopId,
+            agentUid: session.agentUid,
+          ),
+        ]),
+      ),
+    );
+  }
+
   Widget _tabs(Session session) {
+    if (session.canManage) return _staffTabs(session);
     final pages = <Widget>[
       CatalogScreen(onOpenChat: () => _goTo(2)),
       OrdersScreen(uid: widget.uid, user: session.user, onExplore: () => _goTo(0)),
@@ -115,6 +159,18 @@ class _HomeScreenState extends State<HomeScreen> {
               : (ib.data ?? const <InboxItem>[])
                   .where((n) => n.type == 'order' && n.isNewerThan(seen))
                   .length;
+          // Chiffre sur l'icône de l'application (quand elle est en arrière-plan)
+          final inboxSeen = session.user?.inboxSeenAt;
+          BadgeService.update(
+            messages: unread,
+            orders: (ib.data ?? const <InboxItem>[])
+                .where((n) => n.type == 'order' && n.isNewerThan(seen))
+                .length,
+            other: (ib.data ?? const <InboxItem>[])
+                .where((n) =>
+                    n.type != 'order' && n.type != 'chat' && n.isNewerThan(inboxSeen))
+                .length,
+          );
           return NavigationBar(
             selectedIndex: index,
             onDestinationSelected: _goTo,
@@ -197,16 +253,110 @@ class _StaffBadgeState extends State<_StaffBadge> {
       builder: (context, os) => StreamBuilder<List<Conversation>>(
         stream: _convs,
         builder: (context, cs) {
-          final n = (os.data ?? const <ShopOrder>[])
-                  .where((o) => o.status == 'nouvelle')
-                  .length +
-              (cs.data ?? const <Conversation>[])
-                  .fold<int>(0, (a, c) => a + c.unreadForShop);
+          final newOrders = (os.data ?? const <ShopOrder>[])
+              .where((o) => o.status == 'nouvelle')
+              .length;
+          final unreadShop = (cs.data ?? const <Conversation>[])
+              .fold<int>(0, (a, c) => a + c.unreadForShop);
+          final n = newOrders + unreadShop;
+          BadgeService.update(staffMessages: unreadShop, staffOrders: newOrders);
           return Badge(
             isLabelVisible: n > 0,
             label: Text(n > 99 ? '99+' : '$n'),
             backgroundColor: const Color(0xFFD32F2F),
             child: widget.child,
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Barre du bas de l'espace équipe (fond sombre, compteurs).
+class _StaffNav extends StatefulWidget {
+  final int index;
+  final ValueChanged<int> onTap;
+  final String? shopId;
+  final String? agentUid;
+  const _StaffNav(
+      {required this.index, required this.onTap, required this.shopId, this.agentUid});
+
+  @override
+  State<_StaffNav> createState() => _StaffNavState();
+}
+
+class _StaffNavState extends State<_StaffNav> {
+  late Stream<List<ShopOrder>> _orders = Db.allOrders(shopId: widget.shopId);
+  late Stream<List<Conversation>> _convs =
+      Db.allConversations(shopId: widget.shopId, agentUid: widget.agentUid);
+
+  @override
+  void didUpdateWidget(covariant _StaffNav old) {
+    super.didUpdateWidget(old);
+    if (old.shopId != widget.shopId || old.agentUid != widget.agentUid) {
+      _orders = Db.allOrders(shopId: widget.shopId);
+      _convs =
+          Db.allConversations(shopId: widget.shopId, agentUid: widget.agentUid);
+    }
+  }
+
+  Widget _badge(int n, Widget child) => Badge(
+        isLabelVisible: n > 0,
+        label: Text(n > 99 ? '99+' : '$n'),
+        backgroundColor: const Color(0xFFD32F2F),
+        child: child,
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<ShopOrder>>(
+      stream: _orders,
+      builder: (context, os) => StreamBuilder<List<Conversation>>(
+        stream: _convs,
+        builder: (context, cs) {
+          final newOrders = (os.data ?? const <ShopOrder>[])
+              .where((o) => o.status == 'nouvelle')
+              .length;
+          final unread = (cs.data ?? const <Conversation>[])
+              .fold<int>(0, (a, c) => a + c.unreadForShop);
+          BadgeService.update(staffMessages: unread, staffOrders: newOrders);
+          const fg = Colors.white70;
+          return NavigationBarTheme(
+            data: NavigationBarThemeData(
+              backgroundColor: const Color(0xFF13261A),
+              indicatorColor: const Color(0xFF1E8B09),
+              iconTheme: WidgetStateProperty.resolveWith((st) => IconThemeData(
+                  color: st.contains(WidgetState.selected) ? Colors.white : fg)),
+              labelTextStyle: WidgetStateProperty.resolveWith((st) => TextStyle(
+                  color: st.contains(WidgetState.selected) ? Colors.white : fg,
+                  fontWeight: st.contains(WidgetState.selected)
+                      ? FontWeight.w800
+                      : FontWeight.w500,
+                  fontSize: 12.5)),
+            ),
+            child: NavigationBar(
+              selectedIndex: widget.index,
+              onDestinationSelected: widget.onTap,
+              destinations: [
+                const NavigationDestination(
+                    icon: Icon(Icons.space_dashboard_outlined),
+                    selectedIcon: Icon(Icons.space_dashboard_rounded),
+                    label: 'Tableau de bord'),
+                NavigationDestination(
+                    icon: _badge(unread, const Icon(Icons.forum_outlined)),
+                    selectedIcon: _badge(unread, const Icon(Icons.forum_rounded)),
+                    label: 'Discussions'),
+                NavigationDestination(
+                    icon: _badge(newOrders, const Icon(Icons.receipt_long_outlined)),
+                    selectedIcon:
+                        _badge(newOrders, const Icon(Icons.receipt_long_rounded)),
+                    label: 'Commandes'),
+                const NavigationDestination(
+                    icon: Icon(Icons.badge_outlined),
+                    selectedIcon: Icon(Icons.badge_rounded),
+                    label: 'Mon compte'),
+              ],
+            ),
           );
         },
       ),

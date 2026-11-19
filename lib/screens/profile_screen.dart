@@ -6,6 +6,7 @@ import '../config.dart';
 import '../models/app_user.dart';
 import '../models/staff.dart';
 import '../services/auth_service.dart';
+import '../services/badge_service.dart';
 import '../services/call_service.dart';
 import '../services/db.dart';
 import '../services/notify_service.dart';
@@ -70,6 +71,8 @@ class ProfileScreen extends StatelessWidget {
   Future<void> _signOut(BuildContext context, String uid) async {
     final notifier = context.read<SessionNotifier>();
     CallService.stopWatching();
+    BadgeService.update(messages: 0, orders: 0, other: 0, staffMessages: 0, staffOrders: 0);
+    BadgeService.clear();
     await PushService.signOut(uid);
     notifier.clear();
     await AuthService.signOut();
@@ -87,7 +90,9 @@ class ProfileScreen extends StatelessWidget {
             : null;
     final shop = session.myShop;
     return Scaffold(
-      appBar: AppBar(title: const Text('Mon profil'), automaticallyImplyLeading: false),
+      appBar: AppBar(
+          title: Text(isAdmin ? 'Mon compte (équipe)' : 'Mon profil'),
+          automaticallyImplyLeading: false),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -139,6 +144,7 @@ class ProfileScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           _group([
+            if (!isAdmin) ...[
             _tile(Icons.receipt_long_rounded, 'Mes commandes', () => onGoTo(1)),
             _tile(Icons.request_quote_rounded, 'Mes devis', () {
               if (u == null) return;
@@ -158,6 +164,7 @@ class ProfileScreen extends StatelessWidget {
                   'Ma boutique : ${session.clientShopId.isEmpty ? 'à choisir' : shop.name}',
                   () => Navigator.of(context).push(MaterialPageRoute(
                       builder: (_) => const ShopPickerScreen()))),
+            ],
             _tile(Icons.notifications_rounded, 'Notifications', () {
               if (u == null) return;
               Navigator.of(context).push(MaterialPageRoute(
@@ -213,7 +220,7 @@ class ProfileScreen extends StatelessWidget {
           const SizedBox(height: 16),
           _group([
             if (isAdmin)
-              _tile(Icons.storefront_rounded, 'Espace Gestion', () => onGoTo(4)),
+              _tile(Icons.space_dashboard_rounded, 'Tableau de bord', () => onGoTo(0)),
             ListTile(
               leading: const Icon(Icons.logout_rounded, color: Color(0xFFC62828)),
               title: const Text('Se déconnecter',

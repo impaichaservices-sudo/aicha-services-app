@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../config.dart';
+import '../utils.dart';
 import '../models/catalog_item.dart';
 import '../models/promotion.dart';
 import '../services/db.dart';
 import '../services/session.dart';
 import '../state/cart.dart';
 import '../widgets/common.dart';
+import '../widgets/announcement_strip.dart';
 import '../widgets/item_card.dart';
 import '../widgets/product_image.dart';
 import 'cart_screen.dart';
@@ -28,6 +30,7 @@ class CatalogScreen extends StatefulWidget {
 class _CatalogScreenState extends State<CatalogScreen> {
   late final Stream<List<CatalogItem>> _items = Db.catalogItems();
   late final Stream<List<Promotion>> _promos = Db.livePromotions();
+  late final Stream<List<Promotion>> _annStream = Db.livePromotions();
   final _search = TextEditingController();
   String _query = '';
   String? _type;
@@ -72,6 +75,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
           return CustomScrollView(
             slivers: [
               SliverToBoxAdapter(child: _header(cartCount, session)),
+              SliverToBoxAdapter(child: _annonces(shopId)),
               SliverToBoxAdapter(child: _categories()),
               if (!snap.hasData)
                 const SliverFillRemaining(
@@ -179,6 +183,12 @@ class _CatalogScreenState extends State<CatalogScreen> {
             ),
           ]),
           const SizedBox(height: 14),
+          Text('${greetUser(session.user?.name ?? '')} 👋',
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800)),
+          const Text('Que pouvons-nous faire pour vous aujourd\'hui ?',
+              style: TextStyle(color: Colors.white70, fontSize: 13.5)),
+          const SizedBox(height: 10),
           if (session.shops.isNotEmpty) ...[
             InkWell(
               onTap: () => Navigator.of(context).push(MaterialPageRoute(
@@ -276,12 +286,26 @@ class _CatalogScreenState extends State<CatalogScreen> {
     );
   }
 
+  /// Bande d'annonces (offres de type « Annonce ») en haut de l'accueil.
+  Widget _annonces(String shopId) {
+    return StreamBuilder<List<Promotion>>(
+      stream: _annStream,
+      builder: (context, snap) {
+        final list = (snap.data ?? const <Promotion>[])
+            .where((p) => p.kind == 'annonce' && (shopId.isEmpty || p.visibleIn(shopId)))
+            .toList();
+        return AnnouncementStrip(
+            key: ValueKey(list.map((e) => e.id).join(',')), annonces: list);
+      },
+    );
+  }
+
   Widget _offers(String shopId) {
     return StreamBuilder<List<Promotion>>(
       stream: _promos,
       builder: (context, snap) {
         final promos = (snap.data ?? const <Promotion>[])
-            .where((p) => shopId.isEmpty || p.visibleIn(shopId))
+            .where((p) => p.kind != 'annonce' && (shopId.isEmpty || p.visibleIn(shopId)))
             .toList();
         if (promos.isEmpty) {
           // Bandeau d'accueil par défaut quand aucune offre n'est publiée.

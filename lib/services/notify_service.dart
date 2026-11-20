@@ -375,9 +375,9 @@ class PushService {
   static void _onForeground(RemoteMessage m) {
     final n = m.notification;
     if (n == null) return;
-    if (m.data['from'] == _me) return; // mon propre message
+    if (m.data['from'] == FirebaseAuth.instance.currentUser?.uid) return; // mon propre message
     // Discussion d'équipe déjà ouverte : pas de bandeau.
-    if (m.data['type'] == 'team' && m.data['chatId'] == openTeamChat) return;
+    if (m.data['type'] == 'team' && m.data['chatId'] == NotifyService.openTeamChat) return;
     messengerKey.currentState?.showSnackBar(SnackBar(
       duration: const Duration(seconds: 5),
       content: Text('${n.title ?? ''}\n${n.body ?? ''}'.trim()),

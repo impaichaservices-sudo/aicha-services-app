@@ -105,7 +105,7 @@ make_apk() { # $1 = plateformes, $2 = nom du fichier
     if flutter build apk --release --target-platform "$1" \
          --build-number=$BUILD "${DEFINES[@]}" 2>&1 | tee build.log; then ok=1; break; fi
     # Afficher les erreurs dans le résumé (« Annotations »)
-    grep -E "(Error|error):|error: |e: |What went wrong" -A2 build.log | grep -v "^--$" \
+    grep -E "(Error|error):|^e: |What went wrong" -A2 build.log | grep -v "^Note:" | grep -v "^--$" \
       | head -25 | while IFS= read -r l; do echo "::error::$l"; done || true
     echo "Nouvel essai dans 30 s…"; sleep 30
   done

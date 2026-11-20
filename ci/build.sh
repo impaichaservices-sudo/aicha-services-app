@@ -85,8 +85,11 @@ flutter pub get
 dart run flutter_launcher_icons
 
 echo "== 5. Vérification du code (informatif)"
-flutter analyze --no-fatal-infos --no-fatal-warnings lib \
-  || echo "::warning::L'analyse du code signale des problèmes (voir ci-dessus)."
+# Les vraies erreurs apparaissent dans le résumé (« Annotations »).
+flutter analyze --no-fatal-infos --no-fatal-warnings lib 2>&1 | tee analyze.log || true
+grep -E "^\s*error " analyze.log | head -20 | while IFS= read -r l; do
+  echo "::error::ANALYSE $l"
+done || true
 
 echo "== 6. Compilation"
 # Pas de --split-per-abi : il ajoute 1000/2000 au numéro interne et rendait
@@ -100,7 +103,10 @@ make_apk() { # $1 = plateformes, $2 = nom du fichier
   local ok=0
   for i in 1 2; do
     if flutter build apk --release --target-platform "$1" \
-         --build-number=$BUILD "${DEFINES[@]}"; then ok=1; break; fi
+         --build-number=$BUILD "${DEFINES[@]}" 2>&1 | tee build.log; then ok=1; break; fi
+    # Afficher les erreurs dans le résumé (« Annotations »)
+    grep -E "(Error|error):|error: |e: |What went wrong" -A2 build.log | grep -v "^--$" \
+      | head -25 | while IFS= read -r l; do echo "::error::$l"; done || true
     echo "Nouvel essai dans 30 s…"; sleep 30
   done
   [ $ok = 1 ] || exit 1

@@ -18,7 +18,7 @@ const CORS = {
 };
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
     if (req.method === 'GET') {
       return new Response('AICHA SERVICES notifications : OK', { headers: CORS });
@@ -117,7 +117,7 @@ export default {
         };
         const dataMsg = { data, android: { priority: 'high', ttl: '45s' } };
         const targets = [];
-        if (c.callerRole === 'shop') {
+        if (c.callerRole === 'shop' || c.callerRole === 'team') {
           targets.push(c.clientId);
         } else if (c.calleeId) {
           targets.push(c.calleeId);
@@ -127,7 +127,7 @@ export default {
           const tokens = u && Array.isArray(fields(u).fcmTokens) ? fields(u).fcmTokens.slice(-10) : [];
           for (const token of tokens) sent += await send(access, projectId, { ...dataMsg, token });
         }
-        if (c.callerRole !== 'shop') {
+        if (c.callerRole === 'client') {
           const shop = topicSafe(c.shopId || 'main');
           // Pas encore attribuée : toute l'équipe de la boutique + Super Admin.
           // Attribuée : l'agent (ci-dessus) + le Super Admin.
@@ -136,6 +136,48 @@ export default {
             : `'staff_all' in topics`;
           sent += await send(access, projectId, { ...dataMsg, condition: cond });
         }
+      } else if (body.action === 'room_call' || body.action === 'room_ended') {
+        // Réunion de l'équipe : faire sonner (ou arrêter) les membres.
+        const roomDoc = await getDoc(access, projectId, `rooms/${body.roomId}`);
+        if (!roomDoc) throw httpErr(404, 'réunion introuvable');
+        const r = fields(roomDoc);
+        if (r.hostId !== uid && !isSuper) throw httpErr(403, 'interdit');
+        const data = {
+          type: body.action === 'room_call' ? 'incoming_call' : 'call_ended',
+          callId: 'room:' + String(body.roomId),
+          callerName: cut((r.video ? '🎥 ' : '👥 ') + (r.title || 'Réunion') + ' · ' + (r.hostName || ''), 80),
+          timestamp: String(Date.now()),
+        };
+        const members = Array.isArray(r.members) ? r.members.slice(0, 30) : [];
+        for (const m of members) {
+          if (m === uid) continue;
+          const u = await getDoc(access, projectId, `users/${m}`);
+          const tokens = u && Array.isArray(fields(u).fcmTokens) ? fields(u).fcmTokens.slice(-10) : [];
+          for (const token of tokens) {
+            sent += await send(access, projectId, { data, android: { priority: 'high', ttl: '45s' }, token });
+          }
+        }
+      } else if (body.action === 'test_call') {
+        // Appel test vers les téléphones de l'utilisateur lui-même.
+        if (body.check) return json({ ok: true });
+        // Envoi 8 s plus tard (le temps de verrouiller l'écran), même si
+        // l'application est déjà passée en arrière-plan.
+        const later = (async () => {
+          await new Promise((r) => setTimeout(r, 8000));
+          const u = await getDoc(access, projectId, `users/${uid}`);
+          const tokens = u && Array.isArray(fields(u).fcmTokens) ? fields(u).fcmTokens.slice(-10) : [];
+          const data = {
+            type: 'incoming_call',
+            callId: 'test-' + Date.now(),
+            callerName: 'Test Aïcha Services',
+            timestamp: String(Date.now()),
+          };
+          for (const token of tokens) {
+            await send(access, projectId, { data, android: { priority: 'high', ttl: '45s' }, token });
+          }
+        })();
+        if (ctx && ctx.waitUntil) ctx.waitUntil(later);
+        return json({ ok: true, scheduled: true });
       } else {
         throw httpErr(400, 'action inconnue');
       }

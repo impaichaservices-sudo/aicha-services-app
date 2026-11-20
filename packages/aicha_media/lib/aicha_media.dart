@@ -86,6 +86,32 @@ class AichaMedia {
 
   static Future<void> cancelIncomingCall() => _ch.invokeMethod('cancelIncomingCall');
 
+  /// Appel pour lequel « Répondre » a été touché sur l'écran d'appel natif.
+  static Future<String> takeAnswer() async {
+    try {
+      return (await _ch.invokeMethod<String>('takeAnswer')) ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// État des réglages nécessaires pour que les appels sonnent.
+  static Future<Map<String, bool>> callChecks() async {
+    try {
+      final m = await _ch.invokeMethod<Map<dynamic, dynamic>>('callChecks');
+      return (m ?? const {}).map((k, v) => MapEntry('$k', v == true));
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  /// Ouvre le bon écran de réglage : notifications, fullScreen, overlay, battery.
+  static Future<void> openCallSetting(String which) =>
+      _ch.invokeMethod('openCallSetting', {'which': which});
+
+  /// Test local : le téléphone sonne dans 8 secondes.
+  static Future<void> testIncomingCall() => _ch.invokeMethod('testIncomingCall');
+
   /// Afficher l'application par-dessus l'écran verrouillé.
   static Future<void> showOnLock(bool on) =>
       _ch.invokeMethod('showOnLock', {'on': on});

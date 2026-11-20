@@ -13,6 +13,7 @@ import '../services/notify_service.dart';
 import '../services/session.dart';
 import '../services/update_service.dart';
 import '../utils.dart';
+import 'call_settings_screen.dart';
 import 'my_files_screen.dart';
 import 'orders_screen.dart';
 import 'shop_picker_screen.dart';
@@ -169,6 +170,10 @@ class ProfileScreen extends StatelessWidget {
               if (u == null) return;
               Navigator.of(context).push(MaterialPageRoute(
                   builder: (_) => NotificationSettingsScreen(user: u)));
+            }),
+            _tile(Icons.ring_volume_rounded, 'Sonnerie des appels', () {
+              Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => const CallSettingsScreen()));
             }),
           ]),
           const SizedBox(height: 16),

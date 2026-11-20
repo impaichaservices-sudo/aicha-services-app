@@ -10,6 +10,7 @@ import '../nav.dart';
 import '../screens/call_screen.dart';
 import 'db.dart';
 import 'notify_service.dart';
+import 'room_service.dart';
 import 'session.dart';
 
 /// Appels audio par internet entre un client et l'équipe d'une boutique.
@@ -27,8 +28,23 @@ class CallService {
   /// L'appel en cours (un seul à la fois).
   static ActiveCall? current;
 
+  /// Appel (ou « room:<id> » pour une réunion) pour lequel « Répondre » a été
+  /// touché sur l'écran d'appel d'Android.
+  static final pendingAnswer = ValueNotifier<String>('');
+  static _Lifecycle? _answerLife;
+
+  static Future<void> checkAnswer() async {
+    final id = await AichaMedia.takeAnswer();
+    if (id.isEmpty) return;
+    pendingAnswer.value = id;
+    if (id.startsWith('room:')) RoomService.answer(id.substring(5));
+  }
+
+  static Future<List<Map<String, dynamic>>> iceServers() => _iceServers();
+
   // ---------- Appels entrants ----------
   static StreamSubscription? _incomingSub;
+  static StreamSubscription? _teamSub;
   static String _watchKey = '';
   static final Set<String> _shown = {};
 
@@ -73,6 +89,14 @@ class CallService {
   /// À appeler à chaque mise à jour de la session.
   static void watch(Session s) {
     _startPresence(s);
+    RoomService.watch(s);
+    if (_answerLife == null) {
+      _answerLife = _Lifecycle((fg) {
+        if (fg) checkAnswer();
+      });
+      WidgetsBinding.instance.addObserver(_answerLife!);
+      checkAnswer();
+    }
     final String key;
     Query<Map<String, dynamic>> q;
     if (s.isSuper) {
@@ -96,9 +120,11 @@ class CallService {
     if (key == _watchKey) return;
     _watchKey = key;
     _incomingSub?.cancel();
+    _teamSub?.cancel();
+    _teamSub = null;
     final me = s.me;
     final myName = s.canManage ? s.teamName(s.staff?.shopId ?? 'main') : me.name;
-    _incomingSub = q.snapshots().listen((snap) {
+    void onCalls(QuerySnapshot<Map<String, dynamic>> snap) {
       for (final d in snap.docs) {
         final data = d.data();
         if (data['callerId'] == s.uid) continue;
@@ -125,24 +151,46 @@ class CallService {
           continue;
         }
         _shown.add(d.id);
-        _showIncoming(d.id, data, me.uid, myName, me.name);
+        final team = data['callerRole'] == 'team';
+        _showIncoming(d.id, data, me.uid, team ? me.name : myName, me.name);
       }
-    }, onError: (_) {});
+    }
+
+    _incomingSub = q.snapshots().listen(onCalls, onError: (_) {});
+    // Appels entre collègues (équipe) : seulement ceux qui me sont adressés.
+    if (s.canManage) {
+      _teamSub = calls
+          .where('clientId', isEqualTo: s.uid)
+          .where('status', isEqualTo: 'ringing')
+          .where('callerRole', isEqualTo: 'team')
+          .snapshots()
+          .listen(onCalls, onError: (_) {});
+    }
   }
 
   static void stopWatching() {
     _incomingSub?.cancel();
     _incomingSub = null;
+    _teamSub?.cancel();
+    _teamSub = null;
     _watchKey = '';
   }
 
-  static void _showIncoming(String id, Map<String, dynamic> data,
-      String myUid, String myName, String personName) {
+  static Future<void> _showIncoming(String id, Map<String, dynamic> data,
+      String myUid, String myName, String personName) async {
     final nav = navigatorKey.currentState;
     if (nav == null) return;
-    AichaMedia.cancelIncomingCall().catchError((_) {});
-    AichaMedia.showOnLock(true).catchError((_) {});
-    AichaMedia.ring();
+    // « Répondre » déjà touché sur l'écran d'appel d'Android ?
+    await checkAnswer();
+    final answered = pendingAnswer.value == id;
+    final visible =
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    if (visible || answered) {
+      AichaMedia.cancelIncomingCall().catchError((_) {});
+      AichaMedia.showOnLock(true).catchError((_) {});
+      if (!answered) AichaMedia.ring();
+    }
+    // Application en arrière-plan : c'est Android qui sonne (écran natif).
     nav.push(MaterialPageRoute(
       fullscreenDialog: true,
       builder: (_) => CallScreen.incoming(
@@ -152,6 +200,7 @@ class CallService {
         myName: myName,
         personName: personName,
         teamCall: data['callerRole'] == 'client',
+        autoAnswer: answered,
       ),
     ));
   }
@@ -187,6 +236,79 @@ class CallService {
         ),
       ),
     ));
+  }
+
+  /// Appel entre deux membres de l'équipe.
+  static void openTeamCall(
+    BuildContext context, {
+    required String calleeUid,
+    required String calleeName,
+    required String shopId,
+    required AppUser me,
+  }) {
+    if (current != null || calleeUid.isEmpty) return;
+    Navigator.of(context).push(MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (_) => CallScreen.outgoing(
+        otherName: calleeName,
+        myUid: me.uid,
+        myName: me.name,
+        startCall: () => _startTeam(
+          myUid: me.uid,
+          myName: me.name,
+          calleeUid: calleeUid,
+          calleeName: calleeName,
+          shopId: shopId,
+        ),
+      ),
+    ));
+  }
+
+  static Future<ActiveCall> _startTeam({
+    required String myUid,
+    required String myName,
+    required String calleeUid,
+    required String calleeName,
+    required String shopId,
+  }) async {
+    final ref = calls.doc();
+    final call = ActiveCall._(ref, isCaller: true, myUid: myUid, myName: myName)
+      ..otherName = calleeName
+      ..asShop = true;
+    current = call;
+    try {
+      await call._open();
+      final offer = lowBandwidth(
+          await call._pc!.createOffer({'offerToReceiveAudio': true}));
+      await call._pc!.setLocalDescription(offer);
+      await ref.set({
+        'callerId': myUid,
+        'callerName': myName,
+        'callerRole': 'team',
+        'clientId': calleeUid,
+        'clientName': calleeName,
+        'shopId': shopId,
+        'conversationId': '',
+        'calleeId': calleeUid,
+        'callerPerson': myName,
+        'status': 'ringing',
+        'offer': {'sdp': offer.sdp, 'type': offer.type},
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+      call._docReady();
+      call._listen();
+      NotifyService.incomingCall(callId: ref.id);
+      call._timeout = Timer(const Duration(seconds: 50), () {
+        if (call.state.value == CallState.ringing) {
+          call._finish('missed', reason: 'Pas de réponse');
+        }
+      });
+    } catch (e) {
+      await call._cleanup();
+      current = null;
+      rethrow;
+    }
+    return call;
   }
 
   // ---------- Lancer un appel ----------

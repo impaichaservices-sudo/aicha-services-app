@@ -167,54 +167,7 @@ public class AichaMediaPlugin implements FlutterPlugin, ActivityAware,
     /** Appel entrant quand l'application est fermée : notification plein écran
      *  avec sonnerie, qui ouvre l'application. */
     private void showIncomingCall(String callId, String title, String body) {
-        try {
-            NotificationManager nm = (NotificationManager)
-                    context.getSystemService(Context.NOTIFICATION_SERVICE);
-            if (nm == null) return;
-            Uri ring = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
-            if (Build.VERSION.SDK_INT >= 26) {
-                NotificationChannel ch = new NotificationChannel(CALL_CHANNEL,
-                        "Appels", NotificationManager.IMPORTANCE_HIGH);
-                ch.setDescription("Appels entrants Aïcha Services");
-                ch.setSound(ring, new AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build());
-                ch.enableVibration(true);
-                ch.setVibrationPattern(new long[]{0, 800, 800, 800, 800});
-                ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
-                nm.createNotificationChannel(ch);
-            }
-            Intent launch = context.getPackageManager()
-                    .getLaunchIntentForPackage(context.getPackageName());
-            if (launch == null) return;
-            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            launch.putExtra("incoming_call", callId == null ? "" : callId);
-            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-            if (Build.VERSION.SDK_INT >= 23) flags |= PendingIntent.FLAG_IMMUTABLE;
-            PendingIntent pi = PendingIntent.getActivity(context, 7313, launch, flags);
-            Notification.Builder b = Build.VERSION.SDK_INT >= 26
-                    ? new Notification.Builder(context, CALL_CHANNEL)
-                    : new Notification.Builder(context);
-            int icon = context.getApplicationInfo().icon;
-            b.setSmallIcon(icon == 0 ? android.R.drawable.sym_call_incoming : icon)
-                    .setContentTitle(title == null ? "Appel entrant" : title)
-                    .setContentText(body == null ? "Aïcha Services" : body)
-                    .setCategory(Notification.CATEGORY_CALL)
-                    .setPriority(Notification.PRIORITY_MAX)
-                    .setVisibility(Notification.VISIBILITY_PUBLIC)
-                    .setAutoCancel(true)
-                    .setOngoing(true)
-                    .setContentIntent(pi)
-                    .setFullScreenIntent(pi, true)
-                    .addAction(android.R.drawable.sym_action_call, "Répondre", pi);
-            if (Build.VERSION.SDK_INT < 26) {
-                b.setSound(ring).setVibrate(new long[]{0, 800, 800, 800, 800});
-            } else {
-                b.setTimeoutAfter(45000);
-            }
-            nm.notify(CALL_NOTIF_ID, b.build());
-        } catch (Exception ignored) { }
+        IncomingCall.show(context, callId, title);
     }
 
     private static final int BADGE_NOTIF_ID = 7314;
@@ -423,6 +376,7 @@ public class AichaMediaPlugin implements FlutterPlugin, ActivityAware,
             }
             case "stopRing": {
                 stopRing();
+                IncomingCall.dismiss(context);
                 result.success(null);
                 break;
             }
@@ -455,11 +409,72 @@ public class AichaMediaPlugin implements FlutterPlugin, ActivityAware,
                 break;
             }
             case "cancelIncomingCall": {
+                IncomingCall.dismiss(context);
+                result.success(null);
+                break;
+            }
+            case "takeAnswer": {
+                result.success(IncomingCall.takeAnswer(context));
+                break;
+            }
+            case "callChecks": {
+                java.util.HashMap<String, Boolean> m = new java.util.HashMap<>();
+                boolean notif = true;
                 try {
                     NotificationManager nm = (NotificationManager)
                             context.getSystemService(Context.NOTIFICATION_SERVICE);
-                    if (nm != null) nm.cancel(CALL_NOTIF_ID);
+                    if (nm != null && Build.VERSION.SDK_INT >= 24) notif = nm.areNotificationsEnabled();
                 } catch (Exception ignored) { }
+                m.put("notifications", notif);
+                m.put("fullScreen", IncomingCall.fullScreenAllowed(context));
+                m.put("overlay", IncomingCall.overlayAllowed(context));
+                boolean battery = true;
+                try {
+                    android.os.PowerManager pm = (android.os.PowerManager)
+                            context.getSystemService(Context.POWER_SERVICE);
+                    if (pm != null && Build.VERSION.SDK_INT >= 23)
+                        battery = pm.isIgnoringBatteryOptimizations(context.getPackageName());
+                } catch (Exception ignored) { }
+                m.put("battery", battery);
+                result.success(m);
+                break;
+            }
+            case "openCallSetting": {
+                String which = call.argument("which");
+                Uri pkg = Uri.parse("package:" + context.getPackageName());
+                Intent i;
+                if ("overlay".equals(which) && Build.VERSION.SDK_INT >= 23) {
+                    i = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkg);
+                } else if ("fullScreen".equals(which) && Build.VERSION.SDK_INT >= 34) {
+                    i = new Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, pkg);
+                } else if ("battery".equals(which) && Build.VERSION.SDK_INT >= 23) {
+                    i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkg);
+                } else if (Build.VERSION.SDK_INT >= 26) {
+                    i = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                            .putExtra(Settings.EXTRA_APP_PACKAGE, context.getPackageName());
+                } else {
+                    i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg);
+                }
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                try {
+                    context.startActivity(i);
+                } catch (Exception e) {
+                    try {
+                        context.startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                    } catch (Exception ignored) { }
+                }
+                result.success(null);
+                break;
+            }
+            case "testIncomingCall": {
+                // Test local : sonne dans 8 s (le temps de verrouiller l'écran).
+                final Context app = context;
+                new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                    @Override public void run() {
+                        IncomingCall.show(app, "test-" + System.currentTimeMillis(), "Test Aïcha Services");
+                    }
+                }, 8000);
                 result.success(null);
                 break;
             }

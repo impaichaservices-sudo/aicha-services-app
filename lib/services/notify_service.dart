@@ -13,6 +13,7 @@ import '../nav.dart';
 import '../screens/admin/admin_orders_screen.dart';
 import '../screens/chat_screen.dart';
 import '../screens/order_detail_screen.dart';
+import '../screens/team/team_chat_screen.dart';
 import '../widgets/item_card.dart';
 import 'db.dart';
 import 'session.dart';
@@ -25,10 +26,11 @@ Future<void> firebaseBackgroundHandler(RemoteMessage m) async {
   if (m.data['type'] == 'incoming_call') {
     final name = (m.data['callerName'] ?? '').toString();
     try {
+      // Secours : normalement déjà affiché par Android (CallPushReceiver).
       await AichaMedia.showIncomingCall(
         (m.data['callId'] ?? '').toString(),
-        'Appel vocal${name.isEmpty ? '' : ' — $name'}',
-        'Aïcha Services • touchez pour répondre',
+        name,
+        'Aïcha Services',
       );
     } catch (_) {}
   } else if (m.data['type'] == 'call_ended') {
@@ -77,6 +79,80 @@ class NotifyService {
       return res.statusCode == 200;
     } catch (_) {
       return false;
+    }
+  }
+
+  /// Appel test vers ce téléphone (via le serveur) : 'ok', 'old' (serveur
+  /// pas à jour) ou 'error'.
+  static Future<String> testCall() async {
+    try {
+      final url = await _endpoint();
+      if (url.isEmpty) return 'error';
+      final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+      if (token == null) return 'error';
+      // Pas d'attente de la réponse : le serveur patiente 8 s avant d'appeler.
+      final res = await http
+          .post(Uri.parse(url),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+              body: jsonEncode({'action': 'test_call', 'check': true}))
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode == 400) return 'old';
+      if (res.statusCode != 200) return 'error';
+      await http
+          .post(Uri.parse(url),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+              body: jsonEncode({'action': 'test_call'}))
+          .timeout(const Duration(seconds: 15));
+      return 'ok';
+    } catch (_) {
+      return 'error';
+    }
+  }
+
+  /// Réunion d'équipe : faire sonner les membres / arrêter la sonnerie.
+  static void roomCall({required String roomId}) =>
+      _post({'action': 'room_call', 'roomId': roomId});
+  static void roomEnded({required String roomId}) =>
+      _post({'action': 'room_ended', 'roomId': roomId});
+
+  /// Discussion d'équipe actuellement à l'écran (pas de bandeau pour elle).
+  static String openTeamChat = '';
+
+  /// Message d'équipe : prévient les membres (ou toute l'équipe d'une boutique).
+  static void team({
+    required String chatId,
+    required String shopId,
+    required bool wholeShop,
+    required List<String> uids,
+    required String title,
+    required String body,
+  }) {
+    final data = {'type': 'team', 'chatId': chatId, 'audience': 'staff', 'from': _me};
+    if (wholeShop) {
+      _post({
+        'action': 'to_staff',
+        'shopId': shopId,
+        'title': title,
+        'body': body,
+        'data': data,
+      });
+      return;
+    }
+    for (final u in uids.take(30)) {
+      _post({
+        'action': 'to_user',
+        'uid': u,
+        'kind': 'messages',
+        'title': title,
+        'body': body,
+        'data': data,
+      });
     }
   }
 
@@ -299,6 +375,9 @@ class PushService {
   static void _onForeground(RemoteMessage m) {
     final n = m.notification;
     if (n == null) return;
+    if (m.data['from'] == _me) return; // mon propre message
+    // Discussion d'équipe déjà ouverte : pas de bandeau.
+    if (m.data['type'] == 'team' && m.data['chatId'] == openTeamChat) return;
     messengerKey.currentState?.showSnackBar(SnackBar(
       duration: const Duration(seconds: 5),
       content: Text('${n.title ?? ''}\n${n.body ?? ''}'.trim()),
@@ -344,6 +423,11 @@ class PushService {
             clientPhone: asStaff ? conv.clientPhone : '',
           ),
         ));
+        break;
+      case 'team':
+        final id = d['chatId'] ?? '';
+        if (id.isEmpty || !s.canManage) return;
+        nav.push(MaterialPageRoute(builder: (_) => TeamChatScreen(chatId: id)));
         break;
       case 'promo':
         final itemId = d['itemId'] ?? '';

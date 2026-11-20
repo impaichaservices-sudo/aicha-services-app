@@ -14,6 +14,7 @@ class CallScreen extends StatefulWidget {
   final String myName;
   final String personName;
   final bool teamCall; // appel d'un client vers l'équipe (plusieurs téléphones sonnent)
+  final bool autoAnswer; // « Répondre » touché sur l'écran d'appel d'Android
   // Appel sortant
   final Future<ActiveCall> Function()? startCall;
   // Appel entrant
@@ -27,7 +28,8 @@ class CallScreen extends StatefulWidget {
     required Future<ActiveCall> Function() this.startCall,
   })  : callId = '',
         personName = '',
-        teamCall = false;
+        teamCall = false,
+        autoAnswer = false;
 
   const CallScreen.incoming({
     super.key,
@@ -37,6 +39,7 @@ class CallScreen extends StatefulWidget {
     required this.myName,
     this.personName = '',
     this.teamCall = false,
+    this.autoAnswer = false,
   }) : startCall = null;
 
   bool get isIncoming => startCall == null;
@@ -71,6 +74,13 @@ class _CallScreenState extends State<CallScreen> {
           _close(s == 'accepted' ? 'Un collègue a répondu' : 'Appel manqué');
         }
       });
+      if (widget.autoAnswer || CallService.pendingAnswer.value == widget.callId) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _accept();
+        });
+      }
+      // « Répondre » touché plus tard sur l'écran d'appel d'Android.
+      CallService.pendingAnswer.addListener(_onPendingAnswer);
     } else {
       _status = 'Appel…';
       _startOutgoing();
@@ -153,8 +163,17 @@ class _CallScreenState extends State<CallScreen> {
     });
   }
 
+  void _onPendingAnswer() {
+    if (CallService.pendingAnswer.value == widget.callId && _waitingAnswer && mounted) {
+      _accept();
+    }
+  }
+
   Future<void> _accept() async {
     if (_busy) return;
+    if (CallService.pendingAnswer.value == widget.callId) {
+      CallService.pendingAnswer.value = '';
+    }
     setState(() => _busy = true);
     await AichaMedia.stopRing();
     if (!await ensureMic(context)) {
@@ -195,6 +214,7 @@ class _CallScreenState extends State<CallScreen> {
 
   @override
   void dispose() {
+    CallService.pendingAnswer.removeListener(_onPendingAnswer);
     _tick?.cancel();
     _incomingSub?.cancel();
     _call?.state.removeListener(_onState);

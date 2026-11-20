@@ -235,11 +235,88 @@ service cloud.firestore {
         resource.data.ownerId == me() || isSuper());
     }
 
+    // ---------- Discussions internes de l'équipe ----------
+    function teamChat(tid) { return /databases/$(database)/documents/teamChats/$(tid); }
+    function teamMember(d) {
+      return isSuper()
+        || (d.type == 'shop' && isStaffOf(d.shopId))
+        || (d.type != 'shop' && isStaff() && me() in d.members);
+    }
+    function teamAdmin(d) { return isSuper() || isManagerOf(d.shopId); }
+
+    match /teamChats/{tid} {
+      allow get: if signedIn() && (resource == null || teamMember(resource.data));
+      allow list: if signedIn() && (
+        isSuper()
+        || (isStaff() && me() in resource.data.members)
+        || (resource.data.type == 'shop' && isStaffOf(resource.data.shopId)));
+      allow create: if signedIn() && (isSuper() || isStaff()) && (
+        (request.resource.data.type == 'direct'
+          && request.resource.data.members.size() == 2
+          && me() in request.resource.data.members
+          && (tid == 'd_' + request.resource.data.members[0] + '_' + request.resource.data.members[1]
+              || tid == 'd_' + request.resource.data.members[1] + '_' + request.resource.data.members[0]))
+        || (request.resource.data.type == 'shop'
+          && tid == 'g_' + request.resource.data.shopId
+          && manages(request.resource.data.shopId))
+        || (request.resource.data.type == 'group'
+          && me() in request.resource.data.members
+          && teamAdmin(request.resource.data)));
+      allow update: if signedIn() && teamMember(resource.data) && (
+        (resource.data.type == 'group' && teamAdmin(resource.data))
+        || onlyChanges(['lastMessage', 'lastAt', 'lastSender', 'readBy',
+                        'activeRoom', 'activeRoomVideo']));
+      allow delete: if isSuper()
+        || (resource.data.type == 'group' && isManagerOf(resource.data.shopId));
+
+      match /messages/{mid} {
+        allow read: if signedIn() && teamMember(get(teamChat(tid)).data);
+        allow create: if signedIn()
+          && request.resource.data.senderId == me()
+          && teamMember(getAfter(teamChat(tid)).data);
+        allow update, delete: if false;
+      }
+    }
+
+    // ---------- Réunions de l'équipe (vocales / vidéo) ----------
+    function room(rid) { return /databases/$(database)/documents/rooms/$(rid); }
+    function inRoom(d) { return isSuper() || me() == d.hostId || me() in d.members; }
+
+    match /rooms/{rid} {
+      allow get: if signedIn() && (resource == null || inRoom(resource.data));
+      allow list: if signedIn() && (isSuper() || me() in resource.data.members);
+      allow create: if signedIn() && (isSuper() || isStaff())
+        && request.resource.data.hostId == me()
+        && me() in request.resource.data.members
+        && request.resource.data.status == 'active';
+      allow update: if signedIn() && (isSuper() || me() == resource.data.hostId);
+      allow delete: if isSuper();
+
+      match /peers/{uid} {
+        allow read: if signedIn() && inRoom(get(room(rid)).data);
+        allow write: if signedIn() && me() == uid && inRoom(get(room(rid)).data);
+      }
+      match /links/{lid} {
+        allow read: if signedIn() && inRoom(get(room(rid)).data);
+        allow create: if signedIn() && request.resource.data.from == me()
+          && inRoom(get(room(rid)).data);
+        allow update: if signedIn()
+          && (resource.data.to == me() || resource.data.from == me());
+        match /cands/{c} {
+          allow read: if signedIn() && inRoom(get(room(rid)).data);
+          allow create: if signedIn() && request.resource.data.from == me()
+            && inRoom(get(room(rid)).data);
+        }
+      }
+    }
+
     // ---------- Contenu des fichiers (découpé en morceaux) ----------
     function blob(id) { return /databases/$(database)/documents/blobs/$(id); }
     function canReadBlob(d) {
       return d.ownerId == me()
         || isSuper()
+        || (d.conversationId.matches('team:.*')
+            && teamMember(get(teamChat(d.conversationId.split(':')[1])).data))
         || isManagerOf(d.get('shopId', 'main'))
         || get(conv(d.conversationId)).data.clientId == me()
         || staffSees(get(conv(d.conversationId)).data);

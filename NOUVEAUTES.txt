@@ -1,2 +1,6 @@
-- Le lien de téléchargement fonctionne sur tous les téléphones (anciens compris)
-- Mise à jour intégrée plus légère, adaptée à chaque téléphone
+- Nouvel onglet « Équipe » : discussions internes (invisibles des clients)
+- Groupe « Toute l'équipe », groupes de réunion, messages privés entre collègues
+- Réunions vocales et vidéo de l'équipe (Super Admin et responsables)
+- Appels et appels vidéo entre collègues
+- Appels : sonnerie et écran plein écran même application fermée
+- Profil → « Sonnerie des appels » : vérification des réglages et test

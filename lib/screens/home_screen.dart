@@ -8,6 +8,7 @@ import '../models/order.dart';
 import '../models/shop.dart';
 import '../models/shop_settings.dart';
 import '../models/staff.dart';
+import '../models/team_chat.dart';
 import '../services/badge_service.dart';
 import '../services/call_service.dart';
 import '../services/db.dart';
@@ -15,8 +16,10 @@ import '../services/offline_queue.dart';
 import '../services/notify_service.dart';
 import '../services/update_service.dart';
 import '../services/session.dart';
+import '../services/team_service.dart';
 import 'admin/admin_conversations_screen.dart';
 import 'admin/admin_orders_screen.dart';
+import 'team/team_screen.dart';
 import 'admin/admin_screen.dart';
 import 'catalog_screen.dart';
 import 'conversations_screen.dart';
@@ -106,6 +109,7 @@ class _HomeScreenState extends State<HomeScreen> {
       const AdminScreen(),
       AdminConversationsScreen(me: me, shopId: shopId),
       AdminOrdersScreen(me: me, shopId: shopId),
+      const TeamScreen(),
       ProfileScreen(onGoTo: _goTo),
     ];
     final index = _index < pages.length ? _index : 0;
@@ -291,6 +295,19 @@ class _StaffNav extends StatefulWidget {
 }
 
 class _StaffNavState extends State<_StaffNav> {
+  Stream<List<TeamChat>>? _team;
+  String _teamKey = '';
+  String _me = '';
+
+  void _ensureTeam(Session s) {
+    final key = '${s.uid}_${s.isSuper}_${s.staff?.shopId}';
+    if (key != _teamKey) {
+      _teamKey = key;
+      _me = s.uid;
+      _team = TeamService.myChats(s);
+    }
+  }
+
   late Stream<List<ShopOrder>> _orders = Db.allOrders(shopId: widget.shopId);
   late Stream<List<Conversation>> _convs =
       Db.allConversations(shopId: widget.shopId, agentUid: widget.agentUid);
@@ -314,6 +331,7 @@ class _StaffNavState extends State<_StaffNav> {
 
   @override
   Widget build(BuildContext context) {
+    _ensureTeam(sessionOf(context));
     return StreamBuilder<List<ShopOrder>>(
       stream: _orders,
       builder: (context, os) => StreamBuilder<List<Conversation>>(
@@ -324,8 +342,15 @@ class _StaffNavState extends State<_StaffNav> {
               .length;
           final unread = (cs.data ?? const <Conversation>[])
               .fold<int>(0, (a, c) => a + c.unreadForShop);
-          BadgeService.update(staffMessages: unread, staffOrders: newOrders);
           const fg = Colors.white70;
+          return StreamBuilder<List<TeamChat>>(
+            stream: _team,
+            builder: (context, ts) {
+          final teamUnread = (ts.data ?? const <TeamChat>[])
+              .where((c) => c.unreadFor(_me))
+              .length;
+          BadgeService.update(
+              staffMessages: unread + teamUnread, staffOrders: newOrders);
           return NavigationBarTheme(
             data: NavigationBarThemeData(
               backgroundColor: const Color(0xFF13261A),
@@ -356,12 +381,18 @@ class _StaffNavState extends State<_StaffNav> {
                     selectedIcon:
                         _badge(newOrders, const Icon(Icons.receipt_long_rounded)),
                     label: 'Commandes'),
+                NavigationDestination(
+                    icon: _badge(teamUnread, const Icon(Icons.groups_outlined)),
+                    selectedIcon: _badge(teamUnread, const Icon(Icons.groups_rounded)),
+                    label: 'Équipe'),
                 const NavigationDestination(
                     icon: Icon(Icons.badge_outlined),
                     selectedIcon: Icon(Icons.badge_rounded),
-                    label: 'Mon compte'),
+                    label: 'Compte'),
               ],
             ),
+          );
+            },
           );
         },
       ),

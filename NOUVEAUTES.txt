@@ -1,8 +1,2 @@
-- Application plus légère : téléchargement environ 2 fois plus petit
-- Mise à jour adaptée à chaque téléphone (anciens téléphones compris)
-- Sécurité renforcée : chaque agent ne voit que les clients de sa boutique
-- Protection contre les faux prix et les fausses réservations de places
-- Alerte « Vérifiez les prix » pour l'équipe sur les commandes
-- Super Admin de secours (Réglages)
-- Messages d'erreur plus clairs
-- Nettoyage automatique des anciennes notifications
+- Le lien de téléchargement fonctionne sur tous les téléphones (anciens compris)
+- Mise à jour intégrée plus légère, adaptée à chaque téléphone

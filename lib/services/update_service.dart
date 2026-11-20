@@ -20,13 +20,12 @@ class UpdateService {
   static const _repo = 'impaichaservices-sudo/aicha-services-app';
   static const _base = 'https://github.com/$_repo/releases/latest/download/';
 
-  /// APK adapté au téléphone : les anciens téléphones (32 bits) reçoivent
-  /// leur propre version, plus légère et compatible.
+  /// APK léger adapté au téléphone (64 bits ou anciens 32 bits).
+  /// En cas de doute : la version universelle, qui marche partout.
   static Future<String> apkUrl() async {
     final abis = await AichaMedia.abis();
-    if (abis.isNotEmpty && !abis.contains('arm64-v8a') && abis.contains('armeabi-v7a')) {
-      return '${_base}aicha-services-arm32.apk';
-    }
+    if (abis.contains('arm64-v8a')) return '${_base}aicha-services-arm64.apk';
+    if (abis.contains('armeabi-v7a')) return '${_base}aicha-services-arm32.apk';
     return '${_base}aicha-services.apk';
   }
 
@@ -51,9 +50,11 @@ class UpdateService {
       final tag = (j['tag_name'] ?? '') as String;
       final n = int.tryParse(tag.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
       latestNotes = ((j['body'] ?? '') as String).trim();
+      latestSize = 0;
       for (final a in (j['assets'] as List? ?? const [])) {
         final m = a as Map<String, dynamic>;
-        if ((m['name'] ?? '').toString().endsWith('.apk')) {
+        final name = (m['name'] ?? '').toString();
+        if (name.endsWith('.apk') && (latestSize == 0 || name.contains('arm64'))) {
           latestSize = (m['size'] as num?)?.toInt() ?? 0;
         }
       }

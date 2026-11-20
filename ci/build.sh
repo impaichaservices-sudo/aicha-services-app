@@ -97,12 +97,21 @@ build() {
     --build-number=$BUILD "${DEFINES[@]}"
 }
 build || { echo "Nouvel essai dans 30 s…"; sleep 30; build; }
+OUT=build/app/outputs/flutter-apk
+cp "$OUT/app-arm64-v8a-release.apk" aicha-services-arm64.apk
+cp "$OUT/app-armeabi-v7a-release.apk" aicha-services-arm32.apk
+
+echo "== 6b. APK universel (s'installe sur TOUS les téléphones, pour le partage)"
+universal() {
+  flutter build apk --release --target-platform android-arm,android-arm64 \
+    --build-number=$BUILD "${DEFINES[@]}"
+}
+universal || { echo "Nouvel essai dans 30 s…"; sleep 30; universal; }
+cp "$OUT/app-release.apk" aicha-services.apk
 
 echo "== 7. Publication pour les clients"
-OUT=build/app/outputs/flutter-apk
-cp "$OUT/app-arm64-v8a-release.apk" aicha-services.apk        # lien public (téléphones récents)
-cp "$OUT/app-arm64-v8a-release.apk" aicha-services-arm64.apk
-cp "$OUT/app-armeabi-v7a-release.apk" aicha-services-arm32.apk # anciens téléphones
+# aicha-services.apk = universel (lien à partager) ;
+# -arm64 / -arm32 = versions légères utilisées par la mise à jour intégrée.
 ls -la aicha-services*.apk
 if [ -f NOUVEAUTES.txt ]; then cp NOUVEAUTES.txt notes.txt; else echo "Mise à jour de l'application Aïcha Services" > notes.txt; fi
 gh release create "v$BUILD" aicha-services.apk aicha-services-arm64.apk aicha-services-arm32.apk \

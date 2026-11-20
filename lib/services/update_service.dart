@@ -20,12 +20,11 @@ class UpdateService {
   static const _repo = 'impaichaservices-sudo/aicha-services-app';
   static const _base = 'https://github.com/$_repo/releases/latest/download/';
 
-  /// APK léger adapté au téléphone (64 bits ou anciens 32 bits).
-  /// En cas de doute : la version universelle, qui marche partout.
+  /// Téléphones récents (64 bits) : version légère.
+  /// Anciens téléphones ou doute : version universelle, qui marche partout.
   static Future<String> apkUrl() async {
     final abis = await AichaMedia.abis();
     if (abis.contains('arm64-v8a')) return '${_base}aicha-services-arm64.apk';
-    if (abis.contains('armeabi-v7a')) return '${_base}aicha-services-arm32.apk';
     return '${_base}aicha-services.apk';
   }
 

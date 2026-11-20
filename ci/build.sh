@@ -71,11 +71,12 @@ GRADLE
 fi
 
 echo "== 3. Numéro interne de version"
-# Toujours plus grand que la dernière version publiée (sinon Android refuse
-# la mise à jour), même si le fichier de compilation change de nom.
+# Toujours plus grand que tout ce qui a déjà été installé (sinon Android
+# refuse la mise à jour). Base 2200 : les versions du 20/11 matin avaient
+# un numéro interne de 2125/2126.
 LAST=$(gh release view --json tagName -q .tagName 2>/dev/null | tr -dc '0-9' || true)
 LAST=${LAST:-0}
-BUILD=$(( RUN_NUMBER + 100 ))
+BUILD=$(( RUN_NUMBER + 2200 ))
 if [ "$BUILD" -le "$LAST" ]; then BUILD=$(( LAST + 1 )); fi
 echo "Numéro interne : $BUILD (dernière publiée : $LAST)"
 
@@ -87,33 +88,32 @@ echo "== 5. Vérification du code (informatif)"
 flutter analyze --no-fatal-infos --no-fatal-warnings lib \
   || echo "::warning::L'analyse du code signale des problèmes (voir ci-dessus)."
 
-echo "== 6. Compilation (un APK léger par type de téléphone)"
+echo "== 6. Compilation"
+# Pas de --split-per-abi : il ajoute 1000/2000 au numéro interne et rendait
+# les versions incompatibles entre elles. Ici, toutes ont le MÊME numéro.
 DEFINES=(--dart-define=BUILD_NUMBER=$BUILD)
 for v in FIREBASE_API_KEY FIREBASE_APP_ID FIREBASE_SENDER_ID FIREBASE_PROJECT_ID FIREBASE_STORAGE_BUCKET; do
   if [ -n "${!v:-}" ]; then DEFINES+=("--dart-define=$v=${!v}"); fi
 done
-build() {
-  flutter build apk --release --split-per-abi --target-platform android-arm,android-arm64 \
-    --build-number=$BUILD "${DEFINES[@]}"
-}
-build || { echo "Nouvel essai dans 30 s…"; sleep 30; build; }
 OUT=build/app/outputs/flutter-apk
-cp "$OUT/app-arm64-v8a-release.apk" aicha-services-arm64.apk
-cp "$OUT/app-armeabi-v7a-release.apk" aicha-services-arm32.apk
-
-echo "== 6b. APK universel (s'installe sur TOUS les téléphones, pour le partage)"
-universal() {
-  flutter build apk --release --target-platform android-arm,android-arm64 \
-    --build-number=$BUILD "${DEFINES[@]}"
+make_apk() { # $1 = plateformes, $2 = nom du fichier
+  local ok=0
+  for i in 1 2; do
+    if flutter build apk --release --target-platform "$1" \
+         --build-number=$BUILD "${DEFINES[@]}"; then ok=1; break; fi
+    echo "Nouvel essai dans 30 s…"; sleep 30
+  done
+  [ $ok = 1 ] || exit 1
+  cp "$OUT/app-release.apk" "$2"
 }
-universal || { echo "Nouvel essai dans 30 s…"; sleep 30; universal; }
-cp "$OUT/app-release.apk" aicha-services.apk
+# Version légère (téléphones récents, 64 bits) : mise à jour intégrée
+make_apk android-arm64 aicha-services-arm64.apk
+# Version universelle (tous les téléphones) : lien à partager
+make_apk android-arm,android-arm64 aicha-services.apk
 
 echo "== 7. Publication pour les clients"
-# aicha-services.apk = universel (lien à partager) ;
-# -arm64 / -arm32 = versions légères utilisées par la mise à jour intégrée.
 ls -la aicha-services*.apk
 if [ -f NOUVEAUTES.txt ]; then cp NOUVEAUTES.txt notes.txt; else echo "Mise à jour de l'application Aïcha Services" > notes.txt; fi
-gh release create "v$BUILD" aicha-services.apk aicha-services-arm64.apk aicha-services-arm32.apk \
+gh release create "v$BUILD" aicha-services.apk aicha-services-arm64.apk \
   --title "Mise à jour $BUILD" --notes-file notes.txt --latest
 echo "Publié : v$BUILD"

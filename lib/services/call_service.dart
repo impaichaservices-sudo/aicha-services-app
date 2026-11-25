@@ -513,6 +513,9 @@ class CallService {
         });
       }
     } catch (_) {}
+    // Relais Cloudflare (gratuit) : identifiants temporaires fournis par le
+    // serveur de notifications.
+    servers.addAll(await NotifyService.turnServers());
     return servers;
   }
 }

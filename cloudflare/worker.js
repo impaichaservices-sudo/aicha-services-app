@@ -157,6 +157,60 @@ export default {
             sent += await send(access, projectId, { data, android: { priority: 'high', ttl: '45s' }, token });
           }
         }
+      } else if (body.action === 'ice') {
+        // Relais d'appel Cloudflare (TURN) : identifiants temporaires (24 h).
+        if (!env.TURN_KEY_ID || !env.TURN_KEY_TOKEN) return json({ iceServers: [] });
+        if (turnCache && turnCache.exp > Date.now()) return json({ iceServers: turnCache.servers });
+        const r = await fetch(
+          `https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`,
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${env.TURN_KEY_TOKEN}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ttl: 86400 }),
+          }
+        );
+        if (!r.ok) throw httpErr(500, 'relais indisponible (' + r.status + ')');
+        const j = await r.json();
+        const servers = Array.isArray(j.iceServers) ? j.iceServers : (j.iceServers ? [j.iceServers] : []);
+        turnCache = { servers, exp: Date.now() + 6 * 3600 * 1000 };
+        return json({ iceServers: servers });
+      } else if (body.action === 'ai_template') {
+        // Mise en page de devis / factures proposée par l'IA (Workers AI, gratuit).
+        // Ne reçoit qu'une description : jamais de prix, montants ni clients.
+        if (!isSuper && !(staffActive && staff.role === 'manager')) throw httpErr(403, 'interdit');
+        if (!env.AI) throw httpErr(501, 'IA non configurée');
+        const sys =
+          'Tu es un assistant de mise en page de factures. Réponds UNIQUEMENT par un objet JSON ' +
+          'avec ces clés : style (classique|moderne|professionnel|minimaliste|personnalise), ' +
+          'color (couleur #RRGGBB), logoPos (gauche|droite|centre|aucun), ' +
+          'tableStyle (grille|lignes|zebre), header (phrase courte, 80 caractères max), ' +
+          'footer (phrase courte, 120 caractères max), showSignature (true ou false). ' +
+          "N'invente aucun prix, montant, numéro, taxe ni nom de client.";
+        const out = await env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
+          messages: [
+            { role: 'system', content: sys },
+            { role: 'user', content: cut(body.prompt, 600) },
+          ],
+          max_tokens: 300,
+        });
+        const text = String((out && (out.response || out.result)) || '');
+        const m = text.match(/\{[\s\S]*\}/);
+        if (!m) throw httpErr(502, 'réponse IA illisible');
+        let j;
+        try { j = JSON.parse(m[0]); } catch (_) { throw httpErr(502, 'réponse IA illisible'); }
+        const pick = (v, list, d) => (list.includes(v) ? v : d);
+        return json({
+          ok: true,
+          template: {
+            style: pick(j.style, ['classique', 'moderne', 'professionnel', 'minimaliste', 'personnalise'], 'personnalise'),
+            color: /^#[0-9a-fA-F]{6}$/.test(String(j.color || '')) ? j.color : '#1E8B09',
+            logoPos: pick(j.logoPos, ['gauche', 'droite', 'centre', 'aucun'], 'gauche'),
+            tableStyle: pick(j.tableStyle, ['grille', 'lignes', 'zebre'], 'grille'),
+            header: cut(j.header, 80),
+            footer: cut(j.footer, 120),
+            showSignature: j.showSignature !== false,
+          },
+        });
       } else if (body.action === 'test_call') {
         // Appel test vers les téléphones de l'utilisateur lui-même.
         if (body.check) return json({ ok: true });
@@ -279,6 +333,7 @@ async function verifyIdToken(token, projectId) {
 
 // ---------- jeton d'accès Google (compte de service) ----------
 let cachedToken = null;
+let turnCache = null;
 async function getAccessToken(sa) {
   if (cachedToken && cachedToken.exp > Date.now() + 60000) return cachedToken.token;
   const now = Math.floor(Date.now() / 1000);

@@ -1,6 +1,7 @@
-- Nouvel onglet « Équipe » : discussions internes (invisibles des clients)
-- Groupe « Toute l'équipe », groupes de réunion, messages privés entre collègues
-- Réunions vocales et vidéo de l'équipe (Super Admin et responsables)
-- Appels et appels vidéo entre collègues
-- Appels : sonnerie et écran plein écran même application fermée
-- Profil → « Sonnerie des appels » : vérification des réglages et test
+- Nouveau : Gestion commerciale (Tableau de bord → Gestion commerciale)
+- Caisse sans internet, reçu WhatsApp/PDF, stock avec historique, inventaire
+- Clôture journalière avec écart de caisse et rapport PDF
+- Clients, crédits, devis, factures, signature au doigt, PDF
+- Tableau de bord et rapports (ventes, stock, caisse, agents) avec graphiques
+- Modèles de devis et factures (5 styles, couleurs, logo) et proposition par IA
+- Alerte « stock faible » à l'équipe, journal d'activité

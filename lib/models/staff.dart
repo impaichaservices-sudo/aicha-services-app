@@ -8,6 +8,16 @@ const staffPermLabels = {
   'catalog': 'Gérer le catalogue',
   'promos': 'Publier des nouveautés',
   'clients': 'Voir les clients',
+  // Gestion commerciale
+  'sales': 'Caisse : faire des ventes et clôturer sa journée',
+  'discount': 'Caisse : accorder des remises',
+  'credit': 'Caisse : vendre à crédit',
+  'stock': 'Stock : entrées, sorties, inventaire',
+  'products': 'Produits : créer, modifier, voir les prix d\'achat',
+  'reports': 'Voir les ventes et clôtures de toute la boutique',
+  'docs': 'Devis et factures : créer, valider, signer, PDF',
+  'docCancel': 'Annuler une facture validée (avec correction)',
+  'payments': 'Encaisser les crédits et factures des clients',
 };
 
 const staffRoleLabels = {

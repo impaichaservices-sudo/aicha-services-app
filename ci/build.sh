@@ -70,6 +70,29 @@ android {
 GRADLE
 fi
 
+# Types de processeur inclus (variable AICHA_ABIS) : on retire les
+# fichiers des émulateurs (x86), inutiles sur les téléphones.
+if [ -f android/app/build.gradle ]; then
+  cat >> android/app/build.gradle <<'GRADLE'
+
+android {
+    defaultConfig {
+        def abis = System.getenv('AICHA_ABIS')
+        if (abis) { ndk { abiFilters.addAll(abis.split(',') as List) } }
+    }
+}
+GRADLE
+else
+  cat >> android/app/build.gradle.kts <<'GRADLE'
+
+android {
+    defaultConfig {
+        System.getenv("AICHA_ABIS")?.let { a -> ndk { abiFilters.addAll(a.split(",")) } }
+    }
+}
+GRADLE
+fi
+
 echo "== 3. Numéro interne de version"
 # Toujours plus grand que tout ce qui a déjà été installé (sinon Android
 # refuse la mise à jour). Base 2200 : les versions du 20/11 matin avaient
@@ -99,8 +122,9 @@ for v in FIREBASE_API_KEY FIREBASE_APP_ID FIREBASE_SENDER_ID FIREBASE_PROJECT_ID
   if [ -n "${!v:-}" ]; then DEFINES+=("--dart-define=$v=${!v}"); fi
 done
 OUT=build/app/outputs/flutter-apk
-make_apk() { # $1 = plateformes, $2 = nom du fichier
+make_apk() { # $1 = plateformes, $2 = nom du fichier, $3 = types de processeur
   local ok=0
+  export AICHA_ABIS="$3"
   for i in 1 2; do
     if flutter build apk --release --target-platform "$1" \
          --build-number=$BUILD "${DEFINES[@]}" 2>&1 | tee build.log; then ok=1; break; fi
@@ -113,9 +137,9 @@ make_apk() { # $1 = plateformes, $2 = nom du fichier
   cp "$OUT/app-release.apk" "$2"
 }
 # Version légère (téléphones récents, 64 bits) : mise à jour intégrée
-make_apk android-arm64 aicha-services-arm64.apk
+make_apk android-arm64 aicha-services-arm64.apk arm64-v8a
 # Version universelle (tous les téléphones) : lien à partager
-make_apk android-arm,android-arm64 aicha-services.apk
+make_apk android-arm,android-arm64 aicha-services.apk armeabi-v7a,arm64-v8a
 
 echo "== 7. Publication pour les clients"
 ls -la aicha-services*.apk

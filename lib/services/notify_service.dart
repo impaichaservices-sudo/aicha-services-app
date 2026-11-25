@@ -14,6 +14,7 @@ import '../screens/admin/admin_orders_screen.dart';
 import '../screens/chat_screen.dart';
 import '../screens/order_detail_screen.dart';
 import '../screens/team/team_chat_screen.dart';
+import '../screens/commerce/products_screen.dart';
 import '../widgets/item_card.dart';
 import 'db.dart';
 import 'session.dart';
@@ -115,11 +116,76 @@ class NotifyService {
     }
   }
 
+  /// Relais d'appel Cloudflare (TURN) : identifiants valables 24 h,
+  /// gardés 12 h sur le téléphone.
+  static List<Map<String, dynamic>> _turn = const [];
+  static DateTime _turnAt = DateTime(2000);
+
+  static Future<List<Map<String, dynamic>>> turnServers() async {
+    if (_turn.isNotEmpty && DateTime.now().difference(_turnAt) < const Duration(hours: 12)) {
+      return _turn;
+    }
+    try {
+      final url = await _endpoint();
+      if (url.isEmpty) return const [];
+      final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+      if (token == null) return const [];
+      final res = await http
+          .post(Uri.parse(url),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+              body: jsonEncode({'action': 'ice'}))
+          .timeout(const Duration(seconds: 5));
+      if (res.statusCode != 200) return const [];
+      final list = (jsonDecode(res.body)['iceServers'] as List?) ?? const [];
+      final out = <Map<String, dynamic>>[];
+      for (final e in list) {
+        if (e is! Map) continue;
+        final m = <String, dynamic>{};
+        e.forEach((k, v) => m['$k'] = v is List ? v.map((x) => '$x').toList() : v);
+        // Les ports 53 (DNS) sont souvent bloqués : on les retire.
+        final urls = m['urls'];
+        if (urls is List) m['urls'] = urls.where((u) => !'$u'.contains(':53')).toList();
+        out.add(m);
+      }
+      if (out.isNotEmpty) {
+        _turn = out;
+        _turnAt = DateTime.now();
+      }
+      return out;
+    } catch (_) {
+      return const [];
+    }
+  }
+
   /// Réunion d'équipe : faire sonner les membres / arrêter la sonnerie.
   static void roomCall({required String roomId}) =>
       _post({'action': 'room_call', 'roomId': roomId});
   static void roomEnded({required String roomId}) =>
       _post({'action': 'room_ended', 'roomId': roomId});
+
+  /// Appel direct au serveur : renvoie (code HTTP, réponse JSON).
+  static Future<(int, Map<String, dynamic>)> callWorker(Map<String, dynamic> body,
+      {Duration timeout = const Duration(seconds: 40)}) async {
+    final url = await _endpoint();
+    if (url.isEmpty) return (0, <String, dynamic>{'error': 'serveur non configuré'});
+    final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+    if (token == null) return (0, <String, dynamic>{'error': 'non connecté'});
+    final res = await http
+        .post(Uri.parse(url),
+            headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $token'},
+            body: jsonEncode(body))
+        .timeout(timeout);
+    Map<String, dynamic> j;
+    try {
+      j = Map<String, dynamic>.from(jsonDecode(res.body) as Map);
+    } catch (_) {
+      j = <String, dynamic>{};
+    }
+    return (res.statusCode, j);
+  }
 
   /// Discussion d'équipe actuellement à l'écran (pas de bandeau pour elle).
   static String openTeamChat = '';
@@ -428,6 +494,11 @@ class PushService {
         final id = d['chatId'] ?? '';
         if (id.isEmpty || !s.canManage) return;
         nav.push(MaterialPageRoute(builder: (_) => TeamChatScreen(chatId: id)));
+        break;
+      case 'stock':
+        if (!s.canManage) return;
+        nav.push(MaterialPageRoute(
+            builder: (_) => ProductsScreen(shopId: '${d['shopId'] ?? 'main'}', lowOnly: true)));
         break;
       case 'promo':
         final itemId = d['itemId'] ?? '';

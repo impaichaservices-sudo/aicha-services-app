@@ -403,8 +403,219 @@ service cloud.firestore {
       allow write: if signedIn() && me() == uid;
     }
 
+    // ================= GESTION COMMERCIALE =================
+    function inShop(shopId) { return isSuper() || isStaffOf(shopId); }
+    function seesShopSales(shopId) {
+      return isSuper() || isManagerOf(shopId) || canIn(shopId, 'reports');
+    }
+    function mv(id) { return /databases/$(database)/documents/stockMovements/$(id); }
+    function sess(id) { return /databases/$(database)/documents/cashSessions/$(id); }
+
+    // Produits : le stock ne change QUE par un mouvement enregistré en même temps.
+    match /products/{id} {
+      allow read: if signedIn() && inShop(resource.data.shopId);
+      allow create: if signedIn()
+        && (isSuper() || canIn(request.resource.data.shopId, 'products'))
+        && request.resource.data.stock is int;
+      allow update: if signedIn()
+        && request.resource.data.shopId == resource.data.shopId
+        && (
+          ((isSuper() || canIn(resource.data.shopId, 'products'))
+            && request.resource.data.stock == resource.data.stock)
+          ||
+          ((isSuper() || canIn(resource.data.shopId, 'stock')
+                      || canIn(resource.data.shopId, 'sales'))
+            && onlyChanges(['stock', 'lastMovementId', 'updatedAt'])
+            && !exists(mv(request.resource.data.lastMovementId))
+            && getAfter(mv(request.resource.data.lastMovementId)).data.productId == id
+            && getAfter(mv(request.resource.data.lastMovementId)).data.qty
+                 == request.resource.data.stock - resource.data.stock)
+        );
+      allow delete: if false; // désactiver plutôt que supprimer
+    }
+
+    // Mouvements de stock : jamais modifiés ni supprimés (historique).
+    match /stockMovements/{id} {
+      allow read: if signedIn() && inShop(resource.data.shopId);
+      allow create: if signedIn()
+        && request.resource.data.userId == me()
+        && request.resource.data.qty is int
+        && (isSuper()
+            || (request.resource.data.type in ['vente', 'retour']
+                && canIn(request.resource.data.shopId, 'sales'))
+            || canIn(request.resource.data.shopId, 'stock')
+            || canIn(request.resource.data.shopId, 'products'));
+      allow update, delete: if false;
+    }
+
+    // Journées de caisse : une par vendeur et par jour (identifiant fixe).
+    match /cashSessions/{id} {
+      allow get: if signedIn() && (resource == null
+        || resource.data.agentId == me() || seesShopSales(resource.data.shopId));
+      allow list: if signedIn() && (resource.data.agentId == me()
+        || seesShopSales(resource.data.shopId));
+      allow create: if signedIn()
+        && request.resource.data.agentId == me()
+        && request.resource.data.status == 'ouverte'
+        && id == request.resource.data.shopId + '_' + me() + '_'
+                 + request.resource.data.day.replace('-', '')
+        && (isSuper() || canIn(request.resource.data.shopId, 'sales'));
+      allow update: if signedIn()
+        && resource.data.status == 'ouverte'
+        && request.resource.data.shopId == resource.data.shopId
+        && request.resource.data.agentId == resource.data.agentId
+        && (isSuper() || isManagerOf(resource.data.shopId)
+            || (resource.data.agentId == me() && canIn(resource.data.shopId, 'sales')));
+      allow delete: if false;
+    }
+
+    // Ventes : jamais supprimées ; annulation possible tant que la journée est ouverte.
+    match /sales/{id} {
+      allow read: if signedIn() && (resource.data.agentId == me()
+        || seesShopSales(resource.data.shopId)
+        || canIn(resource.data.shopId, 'payments'));
+      allow create: if signedIn()
+        && request.resource.data.agentId == me()
+        && (isSuper() || canIn(request.resource.data.shopId, 'sales'))
+        && request.resource.data.status == 'validee'
+        && request.resource.data.total is int
+        && request.resource.data.total
+             == request.resource.data.subtotal - request.resource.data.discount
+        && request.resource.data.due == request.resource.data.total - request.resource.data.paid
+        && (request.resource.data.discount == 0 || isSuper()
+            || canIn(request.resource.data.shopId, 'discount'))
+        && (request.resource.data.due == 0 || isSuper()
+            || canIn(request.resource.data.shopId, 'credit'))
+        && getAfter(sess(request.resource.data.sessionId)).data.status == 'ouverte'
+        && getAfter(sess(request.resource.data.sessionId)).data.agentId == me();
+      allow update: if signedIn()
+        && onlyChanges(['status', 'cancelReason', 'cancelledBy', 'cancelledByName', 'cancelledAt'])
+        && request.resource.data.status == 'annulee'
+        && get(sess(resource.data.sessionId)).data.status == 'ouverte'
+        && (isSuper() || isManagerOf(resource.data.shopId)
+            || (resource.data.agentId == me() && canIn(resource.data.shopId, 'sales')));
+      allow delete: if false;
+    }
+
+    // Sorties de caisse.
+    match /cashMovements/{id} {
+      allow read: if signedIn() && (resource.data.agentId == me()
+        || seesShopSales(resource.data.shopId));
+      allow create: if signedIn()
+        && request.resource.data.userId == me()
+        && request.resource.data.amount is int
+        && get(sess(request.resource.data.sessionId)).data.status == 'ouverte'
+        && get(sess(request.resource.data.sessionId)).data.shopId == request.resource.data.shopId
+        && (isSuper() || isManagerOf(request.resource.data.shopId)
+            || (request.resource.data.agentId == me()
+                && canIn(request.resource.data.shopId, 'sales')));
+      allow update, delete: if false;
+    }
+
+    // Lettre de caisse de chaque téléphone (A, B, C…) : numéros sans doublon.
+    match /shopDevices/{shopId} {
+      allow read: if signedIn() && inShop(shopId);
+      allow create: if signedIn() && inShop(shopId) && request.resource.data.count == 1;
+      allow update: if signedIn() && inShop(shopId)
+        && request.resource.data.count == resource.data.count + 1;
+      match /list/{deviceId} {
+        allow read, create: if signedIn() && inShop(shopId);
+      }
+    }
+
+    // Journal d'activité (jamais modifié).
+    match /activityLogs/{id} {
+      allow read: if signedIn() && (isSuper() || isManagerOf(resource.data.shopId));
+      allow create: if signedIn() && request.resource.data.userId == me()
+        && inShop(request.resource.data.shopId);
+      allow update, delete: if false;
+    }
+
+    // Clients commerciaux : identifiant = boutique + téléphone (pas de doublon).
+    function canCustomers(shopId) {
+      return isSuper() || canIn(shopId, 'sales') || canIn(shopId, 'docs')
+        || canIn(shopId, 'payments');
+    }
+    match /customers/{id} {
+      allow read: if signedIn() && inShop(resource.data.shopId);
+      allow create: if signedIn() && canCustomers(request.resource.data.shopId)
+        && id.matches(request.resource.data.shopId + '_[0-9]+');
+      allow update: if signedIn() && canCustomers(resource.data.shopId)
+        && request.resource.data.shopId == resource.data.shopId;
+      allow delete: if false;
+    }
+
+    // Paiements des clients (crédits, factures) : jamais modifiés.
     match /payments/{id} {
-      allow read, write: if false;
+      allow read: if signedIn() && (resource.data.userId == me()
+        || seesShopSales(resource.data.shopId)
+        || canIn(resource.data.shopId, 'payments')
+        || canIn(resource.data.shopId, 'docs'));
+      allow create: if signedIn()
+        && request.resource.data.userId == me()
+        && request.resource.data.amount is int
+        && request.resource.data.amount > 0
+        && (isSuper() || canIn(request.resource.data.shopId, 'payments'))
+        && (request.resource.data.sessionId == ''
+            || (get(sess(request.resource.data.sessionId)).data.status == 'ouverte'
+                && get(sess(request.resource.data.sessionId)).data.agentId == me()));
+      allow update, delete: if false;
+    }
+
+    // Modèle des devis / factures d'une boutique.
+    match /docSettings/{shopId} {
+      allow read: if signedIn() && inShop(shopId);
+      allow write: if signedIn() && (isSuper() || isManagerOf(shopId));
+    }
+
+    // Devis et factures.
+    function canDocs(shopId) { return isSuper() || canIn(shopId, 'docs'); }
+    function docRead(d) {
+      return inShop(d.shopId) && (canDocs(d.shopId) || seesShopSales(d.shopId)
+        || canIn(d.shopId, 'payments'));
+    }
+    function docCreate(d) {
+      return canDocs(d.shopId)
+        && d.createdBy == me()
+        && d.status == 'brouillon'
+        && d.total is int
+        && d.total == d.subtotal - d.discount + d.tax;
+    }
+    function docKept() {
+      return request.resource.data.shopId == resource.data.shopId
+        && request.resource.data.number == resource.data.number
+        && request.resource.data.createdBy == resource.data.createdBy;
+    }
+
+    match /quotes/{id} {
+      allow read: if signedIn() && docRead(resource.data);
+      allow create: if signedIn() && docCreate(request.resource.data);
+      allow update: if signedIn() && canDocs(resource.data.shopId) && docKept()
+        && resource.data.status in ['brouillon', 'envoye', 'accepte', 'refuse', 'expire']
+        && (resource.data.status == 'brouillon'
+            || request.resource.data.total == resource.data.total);
+      allow delete: if false;
+    }
+
+    // Facture validée : seulement signature, ou annulation (avec motif) par
+    // un responsable / Super Admin / agent autorisé. Jamais modifiée en silence.
+    match /invoices/{id} {
+      allow read: if signedIn() && docRead(resource.data);
+      allow create: if signedIn() && docCreate(request.resource.data);
+      allow update: if signedIn() && canDocs(resource.data.shopId) && docKept() && (
+        (resource.data.status == 'brouillon'
+          && request.resource.data.status in ['brouillon', 'validee'])
+        || (resource.data.status == 'validee'
+          && onlyChanges(['signature', 'updatedAt'])
+          && !('png' in resource.data.get('signature', {})))
+        || (resource.data.status == 'validee'
+          && request.resource.data.status == 'annulee'
+          && onlyChanges(['status', 'cancelReason', 'cancelledBy', 'cancelledByName',
+                          'cancelledAt', 'replacedBy', 'updatedAt'])
+          && (isSuper() || isManagerOf(resource.data.shopId)
+              || canIn(resource.data.shopId, 'docCancel')))
+      );
+      allow delete: if false;
     }
   }
 }

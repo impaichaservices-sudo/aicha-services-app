@@ -7,6 +7,7 @@ import '../../models/order.dart';
 import '../../services/db.dart';
 import '../../services/session.dart';
 import '../../utils.dart';
+import '../commerce/commerce_home_screen.dart';
 import 'admin_catalog_screen.dart';
 import 'admin_clients_screen.dart';
 import 'admin_conversations_screen.dart';
@@ -186,6 +187,17 @@ class _AdminScreenState extends State<AdminScreen> {
                     _menu(Icons.badge_rounded, 'Équipe',
                         s.isSuper ? 'Responsables et agents' : 'Mes agents et leurs permissions',
                         () => _push(AdminTeamScreen(shopId: scope))),
+                  if (s.isSuper ||
+                      (s.staff?.isManager ?? false) ||
+                      s.can('sales') ||
+                      s.can('stock') ||
+                      s.can('products') ||
+                      s.can('reports') ||
+                      s.can('docs') ||
+                      s.can('payments'))
+                    _menu(Icons.point_of_sale_rounded, 'Gestion commerciale',
+                        'Caisse, stock, clôtures de la journée',
+                        () => _push(const CommerceHomeScreen())),
                   _menu(Icons.receipt_long_rounded, 'Commandes',
                       'Suivre et traiter les commandes',
                       () => _push(AdminOrdersScreen(me: me, shopId: scope))),

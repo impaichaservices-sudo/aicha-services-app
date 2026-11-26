@@ -1,7 +1,2 @@
-- Nouveau : Gestion commerciale (Tableau de bord → Gestion commerciale)
-- Caisse sans internet, reçu WhatsApp/PDF, stock avec historique, inventaire
-- Clôture journalière avec écart de caisse et rapport PDF
-- Clients, crédits, devis, factures, signature au doigt, PDF
-- Tableau de bord et rapports (ventes, stock, caisse, agents) avec graphiques
-- Modèles de devis et factures (5 styles, couleurs, logo) et proposition par IA
-- Alerte « stock faible » à l'équipe, journal d'activité
+- Agents : nouvel accueil très simple avec de gros boutons (Nouvelle vente, Commandes, Messages, Clients, Stock…)
+- Caisse : bouton « Article libre » pour vendre un article hors de la liste

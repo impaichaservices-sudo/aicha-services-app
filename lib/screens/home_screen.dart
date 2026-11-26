@@ -21,6 +21,7 @@ import 'admin/admin_conversations_screen.dart';
 import 'admin/admin_orders_screen.dart';
 import 'team/team_screen.dart';
 import 'admin/admin_screen.dart';
+import 'agent_home_screen.dart';
 import 'catalog_screen.dart';
 import 'conversations_screen.dart';
 import 'orders_screen.dart';
@@ -105,8 +106,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _staffTabs(Session session) {
     final me = session.me;
     final shopId = session.managedShopId;
+    // Agent : accueil très simple (gros boutons). Responsable / Super Admin : tableau de bord.
+    final simple = session.isStaff && !session.isSuper && !(session.staff?.isManager ?? false);
     final pages = <Widget>[
-      const AdminScreen(),
+      simple ? AgentHomeScreen(onGoTo: _goTo) : const AdminScreen(),
       AdminConversationsScreen(me: me, shopId: shopId),
       AdminOrdersScreen(me: me, shopId: shopId),
       const TeamScreen(),
@@ -331,7 +334,9 @@ class _StaffNavState extends State<_StaffNav> {
 
   @override
   Widget build(BuildContext context) {
-    _ensureTeam(sessionOf(context));
+    final sess = sessionOf(context);
+    _ensureTeam(sess);
+    final simple = sess.isStaff && !sess.isSuper && !(sess.staff?.isManager ?? false);
     return StreamBuilder<List<ShopOrder>>(
       stream: _orders,
       builder: (context, os) => StreamBuilder<List<Conversation>>(
@@ -368,10 +373,10 @@ class _StaffNavState extends State<_StaffNav> {
               selectedIndex: widget.index,
               onDestinationSelected: widget.onTap,
               destinations: [
-                const NavigationDestination(
-                    icon: Icon(Icons.space_dashboard_outlined),
-                    selectedIcon: Icon(Icons.space_dashboard_rounded),
-                    label: 'Tableau de bord'),
+                NavigationDestination(
+                    icon: Icon(simple ? Icons.home_outlined : Icons.space_dashboard_outlined),
+                    selectedIcon: Icon(simple ? Icons.home_rounded : Icons.space_dashboard_rounded),
+                    label: simple ? 'Accueil' : 'Tableau de bord'),
                 NavigationDestination(
                     icon: _badge(unread, const Icon(Icons.forum_outlined)),
                     selectedIcon: _badge(unread, const Icon(Icons.forum_rounded)),

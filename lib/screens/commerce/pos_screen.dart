@@ -51,6 +51,64 @@ class _PosScreenState extends State<PosScreen> {
     });
   }
 
+  /// Article ou prestation hors de la liste des produits (saisi à la main).
+  Future<void> _freeItem() async {
+    final name = TextEditingController();
+    final price = TextEditingController();
+    final qty = TextEditingController(text: '1');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Article libre'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Text(
+              'Pour vendre un article ou une prestation qui n\'est pas dans la liste '
+              '(ex : impression, saisie, service). Le stock n\'est pas modifié.',
+              style: TextStyle(fontSize: 12.5, color: Colors.black54),
+            ),
+            TextField(
+              controller: name,
+              autofocus: true,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(labelText: 'Désignation'),
+            ),
+            TextField(
+              controller: price,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(labelText: 'Prix unitaire', suffixText: 'FCFA'),
+            ),
+            TextField(
+              controller: qty,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(labelText: 'Quantité'),
+            ),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Annuler')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Ajouter')),
+        ],
+      ),
+    );
+    final n = name.text.trim();
+    final p = int.tryParse(price.text.trim()) ?? 0;
+    final q = int.tryParse(qty.text.trim()) ?? 1;
+    if (ok != true) return;
+    if (n.isEmpty || p <= 0 || q <= 0) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Indiquez la désignation, le prix et la quantité.')));
+      }
+      return;
+    }
+    final key = 'libre_${DateTime.now().millisecondsSinceEpoch}';
+    setState(() => _cart[key] = SaleLine(
+        productId: key, name: n, unit: 'unité', price: p, qty: q, trackStock: false));
+  }
+
   void _setQty(SaleLine l, int q) {
     final p = _stock[l.productId];
     if (q <= 0) {
@@ -212,11 +270,21 @@ class _PosScreenState extends State<PosScreen> {
       body: Column(children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
-          child: TextField(
-            decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search), hintText: 'Rechercher un produit'),
-            onChanged: (v) => setState(() => _q = v.trim().toLowerCase()),
-          ),
+          child: Row(children: [
+            Expanded(
+              child: TextField(
+                decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.search), hintText: 'Rechercher un produit'),
+                onChanged: (v) => setState(() => _q = v.trim().toLowerCase()),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.tonalIcon(
+              onPressed: _freeItem,
+              icon: const Icon(Icons.edit_note),
+              label: const Text('Article libre'),
+            ),
+          ]),
         ),
         Expanded(
           flex: 5,
@@ -238,8 +306,21 @@ class _PosScreenState extends State<PosScreen> {
                       .toList();
               if (snap.data == null) return const Center(child: CircularProgressIndicator());
               if (list.isEmpty) {
-                return const Center(
-                    child: Text('Aucun produit.', style: TextStyle(color: Colors.black54)));
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      const Text('Aucun produit dans la liste.',
+                          style: TextStyle(color: Colors.black54)),
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        onPressed: _freeItem,
+                        icon: const Icon(Icons.edit_note),
+                        label: const Text('Vendre un article libre'),
+                      ),
+                    ]),
+                  ),
+                );
               }
               return ListView.separated(
                 itemCount: list.length,
